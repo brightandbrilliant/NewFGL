@@ -23,7 +23,7 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, transformer
         transformer = EdgeTransformer(
             input_dim=encoder_params['output_dim'],
             hidden_dim=transformer_params['hidden_dim'],
-            nhead=transformer_params['nhead'],
+            num_heads=transformer_params['nhead'],
             num_layers=transformer_params['num_layers'],
             dropout=transformer_params['dropout']
         )
@@ -83,6 +83,7 @@ if __name__ == "__main__":
     }
 
     transformer_params = {
+        'input_dim': 64,
         'hidden_dim': 64,
         'nhead': 4,
         'num_layers': 3,
