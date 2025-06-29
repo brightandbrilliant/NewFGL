@@ -97,7 +97,7 @@ if __name__ == "__main__":
         'local_epochs': 5
     }
 
-    num_rounds = 200
+    num_rounds = 600
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 2. 初始化客户端
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     best_f1 = -1
     best_encoder_state = None
-    best_transformer_states = []
+    best_transformer_states = None
     best_decoder_states = []
 
     print("\n================ Federated Training Start ================\n")
@@ -123,11 +123,13 @@ if __name__ == "__main__":
         decoder_states = [client.get_decoder_state() for client in clients]
 
         global_encoder_state = average_state_dicts(encoder_states)
+        global_transformer_state = average_state_dicts(transformer_states)
         # global_decoder_state = average_state_dicts(decoder_states)
 
         # 5. 同步 encoder 和 decoder
         for client in clients:
             client.set_encoder_state(global_encoder_state)
+            client.set_transformer_state(global_transformer_state)
             # client.set_decoder_state(global_decoder_state)
 
         # 6. 联邦评估
@@ -136,7 +138,7 @@ if __name__ == "__main__":
         if avg_f1 > best_f1:
             best_f1 = avg_f1
             best_encoder_state = global_encoder_state
-            best_transformer_states = transformer_states
+            best_transformer_state = global_transformer_state
             best_decoder_states = decoder_states
             print("===> New best global model saved.")
 
@@ -146,7 +148,7 @@ if __name__ == "__main__":
     cnt = 0
     for client in clients:
         client.set_encoder_state(best_encoder_state)
-        client.set_transformer_state(best_transformer_states[cnt])
+        client.set_transformer_state(best_transformer_state)
         client.set_decoder_state(best_decoder_states[cnt])
         cnt = cnt+1
 
