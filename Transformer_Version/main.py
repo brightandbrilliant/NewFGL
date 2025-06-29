@@ -3,10 +3,11 @@ import torch
 from Client import Client
 from Model.GCN import GCN
 from Model.ResMLP import ResMLP
+from Model.Transformer import EdgeTransformer  # <-- 新增导入 Transformer
 from torch_geometric.data import Data
 
 
-def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device):
+def load_all_clients(pyg_data_paths, encoder_params, decoder_params, transformer_params, training_params, device):
     clients = []
     for client_id, path in enumerate(pyg_data_paths):
         data = torch.load(path)
@@ -19,8 +20,16 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
             dropout=encoder_params['dropout']
         )
 
+        transformer = EdgeTransformer(
+            input_dim=encoder_params['output_dim'],
+            hidden_dim=transformer_params['hidden_dim'],
+            nhead=transformer_params['nhead'],
+            num_layers=transformer_params['num_layers'],
+            dropout=transformer_params['dropout']
+        )
+
         decoder = ResMLP(
-            input_dim=encoder_params['output_dim'] * 2,
+            input_dim=encoder_params['output_dim'],  # transformer输出是融合后的维度
             hidden_dim=decoder_params['hidden_dim'],
             num_layers=decoder_params['num_layers'],
             dropout=decoder_params['dropout']
@@ -30,6 +39,7 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
             client_id=client_id,
             data=data,
             encoder=encoder,
+            transformer=transformer,
             decoder=decoder,
             device=device,
             lr=training_params['lr'],
@@ -72,9 +82,16 @@ if __name__ == "__main__":
         'dropout': 0.5
     }
 
+    transformer_params = {
+        'hidden_dim': 64,
+        'nhead': 4,
+        'num_layers': 3,
+        'dropout': 0.4
+    }
+
     decoder_params = {
         'hidden_dim': 128,
-        'num_layers': 8,
+        'num_layers': 4,
         'dropout': 0.3
     }
 
@@ -88,11 +105,12 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 2. 初始化客户端
-    clients = load_all_clients(pyg_data_files, encoder_params, decoder_params, training_params, device)
+    clients = load_all_clients(pyg_data_files, encoder_params, decoder_params, transformer_params, training_params, device)
 
     best_f1 = -1
     best_encoder_state = None
-    best_decoder_states = None
+    best_transformer_state = None
+    best_decoder_state = None
 
     print("\n================ Federated Training Start ================\n")
     for rnd in range(1, num_rounds + 1):
@@ -105,15 +123,18 @@ if __name__ == "__main__":
 
         # 4. FedAvg 聚合参数
         encoder_states = [client.get_encoder_state() for client in clients]
+        transformer_states = [client.get_transformer_state() for client in clients]
         decoder_states = [client.get_decoder_state() for client in clients]
 
         global_encoder_state = average_state_dicts(encoder_states)
-        # global_decoder_state = average_state_dicts(decoder_states)
+        global_transformer_state = average_state_dicts(transformer_states)
+        global_decoder_state = average_state_dicts(decoder_states)
 
         # 5. 同步参数
         for client in clients:
             client.set_encoder_state(global_encoder_state)
-            # client.set_decoder_state(global_decoder_state)
+            client.set_transformer_state(global_transformer_state)
+            client.set_decoder_state(global_decoder_state)
 
         # 6. 联邦评估
         avg_acc, avg_recall, avg_prec, avg_f1 = evaluate_all_clients(clients)
@@ -121,17 +142,17 @@ if __name__ == "__main__":
         if avg_f1 > best_f1:
             best_f1 = avg_f1
             best_encoder_state = global_encoder_state
-            best_decoder_states = decoder_states
+            best_transformer_state = global_transformer_state
+            best_decoder_state = global_decoder_state
             print("===> New best global model saved.")
 
     print("\n================ Federated Training Finished ================\n")
 
-    cnt = 0
     # 7. 最终模型评估
     for client in clients:
         client.set_encoder_state(best_encoder_state)
-        client.set_decoder_state(best_decoder_states[cnt])
-        cnt = cnt+1
+        client.set_transformer_state(best_transformer_state)
+        client.set_decoder_state(best_decoder_state)
 
     print("\n================ Final Evaluation ================")
     evaluate_all_clients(clients)

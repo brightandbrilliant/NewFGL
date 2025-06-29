@@ -200,7 +200,7 @@ if __name__ == "__main__":
         'val_ratio': 0.1,
         'test_ratio': 0.1,
         'lr': 0.001,
-        'epochs': 200,
+        'epochs': 1000,
         'log_every_epochs': 10
     }
 

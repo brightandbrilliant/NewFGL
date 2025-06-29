@@ -79,12 +79,12 @@ if __name__ == "__main__":
     }
 
     training_params = {
-        'lr': 0.005,
+        'lr': 0.001,
         'weight_decay': 1e-4,
         'local_epochs': 5
     }
 
-    num_rounds = 40
+    num_rounds = 200
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 2. 初始化客户端
