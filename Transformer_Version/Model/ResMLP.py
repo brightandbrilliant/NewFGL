@@ -34,7 +34,7 @@ class ResMLP(nn.Module):
         # 最后一层：隐藏维度 -> 输出维度（1，表示链接概率的logit）
         self.layers.append(nn.Linear(hidden_dim, 1))
 
-    def forward(self, node_i_embedding: torch.Tensor, node_j_embedding: torch.Tensor) -> torch.Tensor:
+    def forward(self, transformer_embedding: torch.Tensor) -> torch.Tensor:
         """
         前向传播函数。
 
@@ -45,11 +45,9 @@ class ResMLP(nn.Module):
         Returns:
             torch.Tensor: 链接存在的概率的logits，形状为 [batch_size, 1]。
         """
-        # 1. 拼接两个节点的嵌入
-        # 例如：如果 embedding_dim 是 64，那么拼接后 input_to_mlp 的形状将是 [batch_size, 128]
-        x = torch.cat([node_i_embedding, node_j_embedding], dim=-1)  # 在最后一个维度拼接
+        x = transformer_embedding
 
-        # 2. 经过多层MLP变换
+        # 经过多层MLP变换
         # 第一层 (Input_dim -> Hidden_dim)
         x = self.layers[0](x)
         x = F.relu(x)
