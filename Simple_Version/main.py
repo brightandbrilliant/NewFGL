@@ -7,6 +7,7 @@ from torch_geometric.data import Data
 from torch_geometric.transforms import RandomLinkSplit
 from torch_geometric.utils import to_undirected
 
+
 def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     data = data.to(device)
     data.edge_index = to_undirected(data.edge_index, num_nodes=data.num_nodes)
@@ -107,7 +108,7 @@ if __name__ == "__main__":
         'local_epochs': 5
     }
 
-    num_rounds = 200
+    num_rounds = 600
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 2. 初始化客户端

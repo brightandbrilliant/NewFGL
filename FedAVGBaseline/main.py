@@ -109,7 +109,7 @@ if __name__ == "__main__":
         'local_epochs': 5
     }
 
-    num_rounds = 200
+    num_rounds = 600
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 2. 初始化客户端
