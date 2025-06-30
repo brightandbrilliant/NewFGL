@@ -52,19 +52,19 @@ class Client:
 
         return loss.item()
 
-    def evaluate(self):
+    def evaluate(self, use_test=False):
         self.encoder.eval()
         self.decoder.eval()
 
         with torch.no_grad():
             z = self.encoder(self.data.x, self.data.edge_index)
 
-            pos_edge_index = self.data.edge_index
-            neg_edge_index = negative_sampling(
-                edge_index=pos_edge_index,
-                num_nodes=self.data.num_nodes,
-                num_neg_samples=pos_edge_index.size(1)
-            )
+            if use_test:
+                pos_edge_index = self.data.test_pos_edge_index
+                neg_edge_index = self.data.test_neg_edge_index
+            else:
+                pos_edge_index = self.data.val_pos_edge_index
+                neg_edge_index = self.data.val_neg_edge_index
 
             pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
             neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])

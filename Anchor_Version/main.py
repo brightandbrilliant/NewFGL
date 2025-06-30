@@ -5,13 +5,37 @@ from Model.GCN import GCN
 from Model.ResMLP import ResMLP
 from torch_geometric.data import Data
 from Parse_Anchors import read_anchors, parse_anchors
+from torch_geometric.transforms import RandomLinkSplit
+from torch_geometric.utils import to_undirected
+
+def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
+    data = data.to(device)
+    data.edge_index = to_undirected(data.edge_index, num_nodes=data.num_nodes)
+
+    transform = RandomLinkSplit(
+        num_val=val_ratio,
+        num_test=test_ratio,
+        is_undirected=True,
+        neg_sampling_ratio=1.0
+    )
+    train_data, val_data, test_data = transform(data)
+
+    val_mask = val_data.edge_label.bool()
+    test_mask = test_data.edge_label.bool()
+    train_data.val_pos_edge_index = val_data.edge_label_index[:, val_mask]
+    train_data.val_neg_edge_index = val_data.edge_label_index[:, ~val_mask]
+    train_data.test_pos_edge_index = test_data.edge_label_index[:, test_mask]
+    train_data.test_neg_edge_index = test_data.edge_label_index[:, ~test_mask]
+
+    return train_data
 
 
 def load_all_clients(pyg_data_paths, anchor_list, encoder_params, decoder_params,
                      training_params, device, contrastive_weight):
     clients = []
     for client_id, path in enumerate(pyg_data_paths):
-        data = torch.load(path)
+        raw_data = torch.load(path)
+        data = split_client_data(raw_data)
 
         encoder = GCN(
             input_dim=encoder_params['input_dim'],
@@ -50,11 +74,11 @@ def average_state_dicts(state_dicts):
     return avg_state
 
 
-def evaluate_all_clients(clients):
+def evaluate_all_clients(clients, use_test=False):
     metrics = []
     zs = []
     for client in clients:
-        acc, recall, precision, f1, z = client.evaluate()
+        acc, recall, precision, f1, z = client.evaluate(use_test)
         metrics.append((acc, recall, precision, f1))
         zs.append(z)
         print(f"Client {client.client_id}: Acc={acc:.4f}, Recall={recall:.4f}, "
@@ -127,7 +151,7 @@ if __name__ == "__main__":
         for client in clients:
             client.set_encoder_state(global_encoder_state)
 
-        metrics, zs_ = evaluate_all_clients(clients)
+        metrics, zs_ = evaluate_all_clients(clients, False)
 
         if metrics[3] > best_f1:
             best_f1 = metrics[3]
@@ -142,4 +166,4 @@ if __name__ == "__main__":
         client.set_decoder_state(best_decoder_states[i])
 
     print("\n================ Final Evaluation ================")
-    evaluate_all_clients(clients)
+    evaluate_all_clients(clients, True)
