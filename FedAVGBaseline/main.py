@@ -141,7 +141,7 @@ if __name__ == "__main__":
             client.set_decoder_state(global_decoder_state)
 
         # 6. 联邦评估
-        avg_acc, avg_recall, avg_prec, avg_f1 = evaluate_all_clients(clients)
+        avg_acc, avg_recall, avg_prec, avg_f1 = evaluate_all_clients(clients, False)
 
         if avg_f1 > best_f1:
             best_f1 = avg_f1
