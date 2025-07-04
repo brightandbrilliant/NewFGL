@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.utils import negative_sampling
 from collections import defaultdict
+import random
 
 
 class Client:
@@ -17,6 +18,7 @@ class Client:
             weight_decay=weight_decay
         )
         self.criterion = torch.nn.BCEWithLogitsLoss()
+        self.hard_neg_edges = None
 
     def train(self):
         self.encoder.train()
@@ -29,6 +31,10 @@ class Client:
             num_nodes=self.data.num_nodes,
             num_neg_samples=pos_edge_index.size(1)
         )
+
+        # 加入增强的 hard negative edges
+        if self.hard_neg_edges is not None:
+            neg_edge_index = torch.cat([neg_edge_index, self.hard_neg_edges.to(self.device)], dim=1)
 
         z = self.encoder(self.data.x, self.data.edge_index)
 
@@ -86,12 +92,7 @@ class Client:
 
         return acc, recall, precision, f1
 
-    def analyze_prediction_errors(self, cluster_labels, use_test=False):
-        """
-        返回两个字典：
-        - false_negatives[(c1, c2)]: 预测为负但实际上为正的边的聚类对频数
-        - false_positives[(c1, c2)]: 预测为正但实际上为负的边的聚类对频数
-        """
+    def analyze_prediction_errors(self, cluster_labels, use_test=False, top_percent=0.3):
         self.encoder.eval()
         self.decoder.eval()
 
@@ -131,7 +132,40 @@ class Client:
                 c1, c2 = cluster_labels[u], cluster_labels[v]
                 false_positives[(c1, c2)] += 1
 
-        return false_negatives, false_positives
+        def filter_top_percent(dictionary, top_percent):
+            items = list(dictionary.items())
+            items.sort(key=lambda x: x[1], reverse=True)
+            cutoff = max(1, int(len(items) * top_percent))
+            return dict(items[:cutoff])
+
+        filtered_fn = filter_top_percent(false_negatives, top_percent)
+        filtered_fp = filter_top_percent(false_positives, top_percent)
+
+        return filtered_fn, filtered_fp
+
+    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=50):
+        node_pairs = []
+        existing_edges = set((u.item(), v.item()) for u, v in self.data.edge_index.t())
+
+        label_to_nodes = defaultdict(list)
+        for node, label in enumerate(cluster_labels):
+            label_to_nodes[label].append(node)
+
+        for (c1, c2) in target_pairs:
+            nodes1 = label_to_nodes.get(c1, [])
+            nodes2 = label_to_nodes.get(c2, [])
+            candidates = [
+                (u, v) for u in nodes1 for v in nodes2
+                if u != v and (u, v) not in existing_edges and (v, u) not in existing_edges
+            ]
+            sampled = random.sample(candidates, min(max_per_pair, len(candidates)))
+            node_pairs.extend(sampled)
+
+        if node_pairs:
+            edges = torch.tensor(node_pairs, dtype=torch.long).t().contiguous()
+            self.hard_neg_edges = edges
+        else:
+            self.hard_neg_edges = None
 
     def get_encoder_state(self):
         return self.encoder.state_dict()

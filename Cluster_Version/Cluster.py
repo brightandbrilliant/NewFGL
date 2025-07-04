@@ -109,7 +109,7 @@ def build_cluster_cooccurrence_matrix(cluster_labels1, cluster_labels2, anchor_p
     Returns:
         matrix: ndarray，形状为 [k, k]，matrix[i][j] 表示图1第i类与图2第j类之间的锚点对数
     """
-    results_sorted = sorted(results, key=lambda x: x[2])
+    results_sorted = sorted(anchor_pairs, key=lambda x: x[2])
     cutoff = int(len(results_sorted) * top_percent)
     filtered = results_sorted[:cutoff]
     matrix = np.zeros((num_clusters, num_clusters), dtype=int)
