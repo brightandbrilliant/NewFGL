@@ -70,6 +70,7 @@ def average_state_dicts(state_dicts):
     return avg_state
 
 
+
 def evaluate_all_clients(clients, use_test=False):
     metrics = []
     for client in clients:
