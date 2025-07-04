@@ -6,7 +6,7 @@ import random
 
 
 class Client:
-    def __init__(self, client_id, data, encoder, decoder, device='cpu', lr=0.005, weight_decay=1e-4):
+    def __init__(self, client_id, data, encoder, decoder, device='cpu', lr=0.005, weight_decay=1e-4, enhance_interval=100):
         self.client_id = client_id
         self.data = data.to(device)
         self.device = device
@@ -19,6 +19,7 @@ class Client:
         )
         self.criterion = torch.nn.BCEWithLogitsLoss()
         self.hard_neg_edges = None
+        self.enhance_interval = enhance_interval  # 每隔 k 轮进行增强
 
     def train(self):
         self.encoder.train()
@@ -49,6 +50,32 @@ class Client:
         pred = torch.cat([pos_pred, neg_pred], dim=0).squeeze()
 
         loss = self.criterion(pred, labels)
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+    def train_on_hard_negatives(self):
+        if self.hard_neg_edges is None:
+            return 0.0
+
+        self.encoder.train()
+        self.decoder.train()
+        self.optimizer.zero_grad()
+
+        pos_edge_index = self.data.edge_index
+        z = self.encoder(self.data.x, self.data.edge_index)
+
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred = self.decoder(z[self.hard_neg_edges[0]], z[self.hard_neg_edges[1]])
+
+        labels = torch.cat([
+            torch.ones(pos_pred.size(0), device=self.device),
+            torch.zeros(neg_pred.size(0), device=self.device)
+        ])
+        pred = torch.cat([pos_pred, neg_pred], dim=0)
+
+        loss = self.criterion(pred.squeeze(), labels.squeeze())
         loss.backward()
         self.optimizer.step()
 

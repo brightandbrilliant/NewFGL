@@ -30,7 +30,7 @@ def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
 
     return train_data
 
-def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device, nClusters=10):
+def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device, nClusters=10, enhance_interval=5):
     clients = []
     all_cluster_labels = []
     raw_data_list = []
@@ -65,7 +65,8 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
             decoder=decoder,
             device=device,
             lr=training_params['lr'],
-            weight_decay=training_params['weight_decay']
+            weight_decay=training_params['weight_decay'],
+            enhance_interval=enhance_interval
         )
         clients.append(client)
 
@@ -120,13 +121,16 @@ if __name__ == "__main__":
     }
 
     num_rounds = 600
-    augment_start_round = 2
+    augment_start_round = 300
     top_fp_percent = 0.3
+    enhance_interval = 5
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     nClusters = 10
 
-    clients, cluster_labels, raw_data_list = load_all_clients(pyg_data_files, encoder_params, decoder_params, training_params, device, nClusters)
+    clients, cluster_labels, raw_data_list = load_all_clients(
+        pyg_data_files, encoder_params, decoder_params, training_params, device, nClusters, enhance_interval
+    )
 
     anchor_raw = read_anchors(anchor_path)
     anchor_pairs = parse_anchors(anchor_raw, point=9086)
@@ -147,7 +151,6 @@ if __name__ == "__main__":
     for rnd in range(1, num_rounds + 1):
         print(f"\n--- Round {rnd} ---")
 
-        # 中期数据增强逻辑
         if rnd == augment_start_round:
             print("\n===> Injecting Hard Negatives at Mid Training\n")
             for i, client in enumerate(clients):
@@ -156,7 +159,9 @@ if __name__ == "__main__":
 
         for client in clients:
             for _ in range(training_params['local_epochs']):
-                loss = client.train()
+                client.train()
+            if rnd >= augment_start_round and rnd % enhance_interval == 0:
+                client.train_on_hard_negatives()
 
         encoder_states = [client.get_encoder_state() for client in clients]
         decoder_states = [client.get_decoder_state() for client in clients]
