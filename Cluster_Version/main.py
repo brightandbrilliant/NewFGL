@@ -3,11 +3,17 @@ import torch
 from Client import Client
 from Model.GCN import GCN
 from Model.ResMLP import ResMLP
-from torch_geometric.data import Data
 from torch_geometric.transforms import RandomLinkSplit
 from torch_geometric.utils import to_undirected
-from Cluster import kmeans_cluster_single, compute_anchor_feature_differences, build_cluster_cooccurrence_matrix, extract_clear_alignments
+from Cluster import (
+    kmeans_cluster_single,
+    compute_anchor_feature_differences,
+    build_cluster_cooccurrence_matrix,
+    extract_clear_alignments
+)
 from Parse_Anchors import read_anchors, parse_anchors
+from Build import build_positive_edge_dict, build_edge_type_alignment
+
 
 def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     data = data.to(device)
@@ -30,10 +36,12 @@ def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
 
     return train_data
 
+
 def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device, nClusters=10, enhance_interval=5):
     clients = []
     all_cluster_labels = []
     raw_data_list = []
+    edge_dicts = []
 
     for client_id, path in enumerate(pyg_data_paths):
         raw_data = torch.load(path)
@@ -43,20 +51,11 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
         cluster_labels, _ = kmeans_cluster_single(data, n_clusters=nClusters)
         all_cluster_labels.append(cluster_labels)
 
-        encoder = GCN(
-            input_dim=encoder_params['input_dim'],
-            hidden_dim=encoder_params['hidden_dim'],
-            output_dim=encoder_params['output_dim'],
-            num_layers=encoder_params['num_layers'],
-            dropout=encoder_params['dropout']
-        )
+        edge_dict = build_positive_edge_dict(data, cluster_labels)
+        edge_dicts.append(edge_dict)
 
-        decoder = ResMLP(
-            input_dim=encoder_params['output_dim'] * 2,
-            hidden_dim=decoder_params['hidden_dim'],
-            num_layers=decoder_params['num_layers'],
-            dropout=decoder_params['dropout']
-        )
+        encoder = GCN(**encoder_params)
+        decoder = ResMLP(input_dim=encoder_params['output_dim'] * 2, **decoder_params)
 
         client = Client(
             client_id=client_id,
@@ -70,7 +69,8 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
         )
         clients.append(client)
 
-    return clients, all_cluster_labels, raw_data_list
+    return clients, all_cluster_labels, raw_data_list, edge_dicts
+
 
 def average_state_dicts(state_dicts):
     avg_state = {}
@@ -78,22 +78,27 @@ def average_state_dicts(state_dicts):
         avg_state[key] = torch.stack([sd[key] for sd in state_dicts], dim=0).mean(dim=0)
     return avg_state
 
+
+def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment, top_k=100):
+    selected_edges = []
+    for (c1, c2) in target_fp_types:
+        aligned_targets = edge_alignment.get((c1, c2), [])
+        for (c1_p, c2_p), weight in aligned_targets:
+            candidate_edges = edge_dict.get((c1_p, c2_p), [])
+            selected_edges.extend(candidate_edges[:top_k])
+    return selected_edges
+
+
 def evaluate_all_clients(clients, cluster_labels, use_test=False):
     metrics = []
     for i, client in enumerate(clients):
         acc, recall, precision, f1 = client.evaluate(use_test=use_test)
         metrics.append((acc, recall, precision, f1))
-        print(f"Client {client.client_id}: Acc={acc:.4f}, Recall={recall:.4f}, "
-              f"Prec={precision:.4f}, F1={f1:.4f}")
+        print(f"Client {client.client_id}: Acc={acc:.4f}, Recall={recall:.4f}, Prec={precision:.4f}, F1={f1:.4f}")
+    avg = torch.tensor(metrics).mean(dim=0).tolist()
+    print(f"\n===> Average: Acc={avg[0]:.4f}, Recall={avg[1]:.4f}, Prec={avg[2]:.4f}, F1={avg[3]:.4f}")
+    return avg
 
-        fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=use_test)
-        print(f"  False Negative Cluster Pairs: {dict(fn)}")
-        print(f"  False Positive Cluster Pairs: {dict(fp)}")
-
-    avg_metrics = torch.tensor(metrics).mean(dim=0).tolist()
-    print(f"\n===> Average Metrics: Acc={avg_metrics[0]:.4f}, Recall={avg_metrics[1]:.4f}, "
-          f"Prec={avg_metrics[2]:.4f}, F1={avg_metrics[3]:.4f}")
-    return avg_metrics
 
 if __name__ == "__main__":
     data_dir = "../Parsed_dataset/dblp"
@@ -107,28 +112,18 @@ if __name__ == "__main__":
         'num_layers': 3,
         'dropout': 0.5
     }
-
-    decoder_params = {
-        'hidden_dim': 128,
-        'num_layers': 8,
-        'dropout': 0.3
-    }
-
-    training_params = {
-        'lr': 0.001,
-        'weight_decay': 1e-4,
-        'local_epochs': 5
-    }
+    decoder_params = {'hidden_dim': 128, 'num_layers': 8, 'dropout': 0.3}
+    training_params = {'lr': 0.001, 'weight_decay': 1e-4, 'local_epochs': 5}
 
     num_rounds = 600
     augment_start_round = 300
     top_fp_percent = 0.3
     enhance_interval = 5
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    top_k_per_type = 100
     nClusters = 10
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    clients, cluster_labels, raw_data_list = load_all_clients(
+    clients, cluster_labels, raw_data_list, edge_dicts = load_all_clients(
         pyg_data_files, encoder_params, decoder_params, training_params, device, nClusters, enhance_interval
     )
 
@@ -138,30 +133,36 @@ if __name__ == "__main__":
     co_matrix = build_cluster_cooccurrence_matrix(cluster_labels[0], cluster_labels[1], results, nClusters, top_percent=0.75)
     alignment1 = extract_clear_alignments(co_matrix, min_ratio=0.25, min_count=30, mode=1)
     alignment2 = extract_clear_alignments(co_matrix, min_ratio=0.25, min_count=30, mode=2)
-
-    print("\n===> Class Alignment Results:")
-    print("Graph1 → Graph2:", alignment1)
-    print("Graph2 → Graph1:", alignment2)
+    edge_alignment1 = build_edge_type_alignment(alignment1, nClusters)
+    edge_alignment2 = build_edge_type_alignment(alignment2, nClusters)
 
     best_f1 = -1
     best_encoder_state = None
     best_decoder_states = None
 
-    print("\n================ Federated Training Start ================\n")
+    print("\n================ Federated Training Start ================")
     for rnd in range(1, num_rounds + 1):
         print(f"\n--- Round {rnd} ---")
 
         if rnd == augment_start_round:
-            print("\n===> Injecting Hard Negatives at Mid Training\n")
+            print("\n===> Injecting hard negatives and augmented positives")
             for i, client in enumerate(clients):
-                _, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_percent)
-                client.inject_hard_negatives(target_pairs=fp, cluster_labels=cluster_labels[i])
+                fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_percent)
+                client.inject_hard_negatives(fp, cluster_labels[i])
+
+                # 正边增强（从另一个图中提取）
+                if i == 0:
+                    edge_list = extract_augmented_positive_edges(fp, edge_dicts[1], edge_alignment1, top_k=top_k_per_type)
+                else:
+                    edge_list = extract_augmented_positive_edges(fp, edge_dicts[0], edge_alignment2, top_k=top_k_per_type)
+                client.inject_augmented_positive_edges(edge_list)
 
         for client in clients:
             for _ in range(training_params['local_epochs']):
                 client.train()
             if rnd >= augment_start_round and rnd % enhance_interval == 0:
                 client.train_on_hard_negatives()
+                client.train_on_augmented_positives()
 
         encoder_states = [client.get_encoder_state() for client in clients]
         decoder_states = [client.get_decoder_state() for client in clients]
@@ -176,10 +177,9 @@ if __name__ == "__main__":
             best_f1 = avg_f1
             best_encoder_state = global_encoder_state
             best_decoder_states = decoder_states
-            print("===> New best global model saved.")
+            print("===> New best model saved")
 
-    print("\n================ Federated Training Finished ================\n")
-
+    print("\n================ Federated Training Finished ================")
     for i, client in enumerate(clients):
         client.set_encoder_state(best_encoder_state)
         client.set_decoder_state(best_decoder_states[i])

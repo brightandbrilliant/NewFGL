@@ -19,7 +19,8 @@ class Client:
         )
         self.criterion = torch.nn.BCEWithLogitsLoss()
         self.hard_neg_edges = None
-        self.enhance_interval = enhance_interval  # 每隔 k 轮进行增强
+        self.augmented_pos_edges = None  # <--- 新增增强正边
+        self.enhance_interval = enhance_interval
 
     def train(self):
         self.encoder.train()
@@ -27,13 +28,18 @@ class Client:
         self.optimizer.zero_grad()
 
         pos_edge_index = self.data.edge_index
+
+        # 加入增强正边
+        if self.augmented_pos_edges is not None:
+            pos_edge_index = torch.cat([pos_edge_index, self.augmented_pos_edges.to(self.device)], dim=1)
+
         neg_edge_index = negative_sampling(
-            edge_index=pos_edge_index,
+            edge_index=self.data.edge_index,
             num_nodes=self.data.num_nodes,
             num_neg_samples=pos_edge_index.size(1)
         )
 
-        # 加入增强的 hard negative edges
+        # 加入增强负边
         if self.hard_neg_edges is not None:
             neg_edge_index = torch.cat([neg_edge_index, self.hard_neg_edges.to(self.device)], dim=1)
 
@@ -80,6 +86,42 @@ class Client:
         self.optimizer.step()
 
         return loss.item()
+
+
+    def train_on_augmented_positives(self):
+        if self.augmented_pos_edges is None:
+            return 0.0
+
+        self.encoder.train()
+        self.decoder.train()
+        self.optimizer.zero_grad()
+
+        pos_edge_index = self.augmented_pos_edges.to(self.device)
+
+        neg_edge_index = negative_sampling(
+            edge_index=self.data.edge_index,
+            num_nodes=self.data.num_nodes,
+            num_neg_samples=pos_edge_index.size(1)
+        )
+
+        z = self.encoder(self.data.x, self.data.edge_index)
+
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
+
+        labels = torch.cat([
+            torch.ones(pos_pred.size(0), device=self.device),
+            torch.zeros(neg_pred.size(0), device=self.device)
+        ])
+        pred = torch.cat([pos_pred, neg_pred], dim=0)
+
+        loss = self.criterion(pred.squeeze(), labels.squeeze())
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+
 
     def evaluate(self, use_test=False):
         self.encoder.eval()
@@ -170,7 +212,7 @@ class Client:
 
         return filtered_fn, filtered_fp
 
-    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=50):
+    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=500):
         node_pairs = []
         existing_edges = set((u.item(), v.item()) for u, v in self.data.edge_index.t())
 
@@ -193,6 +235,15 @@ class Client:
             self.hard_neg_edges = edges
         else:
             self.hard_neg_edges = None
+
+    def inject_augmented_positive_edges(self, edge_list):
+        if edge_list:
+            self.augmented_pos_edges = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+        else:
+            self.augmented_pos_edges = None
+
+    def clear_augmented_edges(self):
+        self.augmented_pos_edges = None
 
     def get_encoder_state(self):
         return self.encoder.state_dict()
