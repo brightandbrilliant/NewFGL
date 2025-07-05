@@ -14,7 +14,6 @@ from Cluster import (
 from Parse_Anchors import read_anchors, parse_anchors
 from Build import build_positive_edge_dict, build_edge_type_alignment
 
-
 def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     data = data.to(device)
     data.edge_index = to_undirected(data.edge_index, num_nodes=data.num_nodes)
@@ -35,7 +34,6 @@ def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     train_data.test_neg_edge_index = test_data.edge_label_index[:, ~test_mask]
 
     return train_data
-
 
 def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device, nClusters=10, enhance_interval=5):
     clients = []
@@ -71,13 +69,11 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
 
     return clients, all_cluster_labels, raw_data_list, edge_dicts
 
-
 def average_state_dicts(state_dicts):
     avg_state = {}
     for key in state_dicts[0].keys():
         avg_state[key] = torch.stack([sd[key] for sd in state_dicts], dim=0).mean(dim=0)
     return avg_state
-
 
 def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment, top_k=100):
     selected_edges = []
@@ -88,7 +84,6 @@ def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment,
             selected_edges.extend(candidate_edges[:top_k])
     return selected_edges
 
-
 def evaluate_all_clients(clients, cluster_labels, use_test=False):
     metrics = []
     for i, client in enumerate(clients):
@@ -98,7 +93,6 @@ def evaluate_all_clients(clients, cluster_labels, use_test=False):
     avg = torch.tensor(metrics).mean(dim=0).tolist()
     print(f"\n===> Average: Acc={avg[0]:.4f}, Recall={avg[1]:.4f}, Prec={avg[2]:.4f}, F1={avg[3]:.4f}")
     return avg
-
 
 if __name__ == "__main__":
     data_dir = "../Parsed_dataset/dblp"
@@ -146,16 +140,16 @@ if __name__ == "__main__":
 
         if rnd == augment_start_round:
             print("\n===> Injecting hard negatives and augmented positives")
+            z_others = [client.encoder(client.data.x, client.data.edge_index).detach() for client in clients]
+
             for i, client in enumerate(clients):
                 fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_percent)
                 client.inject_hard_negatives(fp, cluster_labels[i])
 
                 # 正边增强（从另一个图中提取）
-                if i == 0:
-                    edge_list = extract_augmented_positive_edges(fp, edge_dicts[1], edge_alignment1, top_k=top_k_per_type)
-                else:
-                    edge_list = extract_augmented_positive_edges(fp, edge_dicts[0], edge_alignment2, top_k=top_k_per_type)
-                client.inject_augmented_positive_edges(edge_list)
+                j = 1 - i
+                edge_list = extract_augmented_positive_edges(fp, edge_dicts[j], edge_alignment1 if i == 0 else edge_alignment2, top_k=top_k_per_type)
+                client.inject_augmented_positive_edges(edge_list, z_others[j])
 
         for client in clients:
             for _ in range(training_params['local_epochs']):

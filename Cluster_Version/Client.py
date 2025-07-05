@@ -19,7 +19,7 @@ class Client:
         )
         self.criterion = torch.nn.BCEWithLogitsLoss()
         self.hard_neg_edges = None
-        self.augmented_pos_edges = None  # <--- 新增增强正边
+        self.augmented_pos_embeddings = None  # 现在是embedding对
         self.enhance_interval = enhance_interval
 
     def train(self):
@@ -28,18 +28,12 @@ class Client:
         self.optimizer.zero_grad()
 
         pos_edge_index = self.data.edge_index
-
-        # 加入增强正边
-        if self.augmented_pos_edges is not None:
-            pos_edge_index = torch.cat([pos_edge_index, self.augmented_pos_edges.to(self.device)], dim=1)
-
         neg_edge_index = negative_sampling(
             edge_index=self.data.edge_index,
             num_nodes=self.data.num_nodes,
             num_neg_samples=pos_edge_index.size(1)
         )
 
-        # 加入增强负边
         if self.hard_neg_edges is not None:
             neg_edge_index = torch.cat([neg_edge_index, self.hard_neg_edges.to(self.device)], dim=1)
 
@@ -87,41 +81,32 @@ class Client:
 
         return loss.item()
 
-
     def train_on_augmented_positives(self):
-        if self.augmented_pos_edges is None:
+        if self.augmented_pos_embeddings is None:
             return 0.0
 
         self.encoder.train()
         self.decoder.train()
         self.optimizer.zero_grad()
 
-        pos_edge_index = self.augmented_pos_edges.to(self.device)
-
-        neg_edge_index = negative_sampling(
-            edge_index=self.data.edge_index,
-            num_nodes=self.data.num_nodes,
-            num_neg_samples=pos_edge_index.size(1)
-        )
-
         z = self.encoder(self.data.x, self.data.edge_index)
-
+        pos_edge_index = self.data.edge_index
         pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
-        neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
 
-        labels = torch.cat([
-            torch.ones(pos_pred.size(0), device=self.device),
-            torch.zeros(neg_pred.size(0), device=self.device)
-        ])
-        pred = torch.cat([pos_pred, neg_pred], dim=0)
+        # 处理增强边 embedding 对
+        z_u_aug, z_v_aug = zip(*self.augmented_pos_embeddings)
+        z_u_aug = torch.stack(z_u_aug).to(self.device)
+        z_v_aug = torch.stack(z_v_aug).to(self.device)
+        pos_pred_aug = self.decoder(z_u_aug, z_v_aug)
 
-        loss = self.criterion(pred.squeeze(), labels.squeeze())
+        labels = torch.ones(pos_pred.size(0) + pos_pred_aug.size(0), device=self.device)
+        pred = torch.cat([pos_pred, pos_pred_aug], dim=0)
+
+        loss = self.criterion(pred.squeeze(), labels)
         loss.backward()
         self.optimizer.step()
 
         return loss.item()
-
-
 
     def evaluate(self, use_test=False):
         self.encoder.eval()
@@ -236,14 +221,14 @@ class Client:
         else:
             self.hard_neg_edges = None
 
-    def inject_augmented_positive_edges(self, edge_list):
+    def inject_augmented_positive_edges(self, edge_list, other_embeddings):
         if edge_list:
-            self.augmented_pos_edges = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+            self.augmented_pos_embeddings = [(other_embeddings[u].detach(), other_embeddings[v].detach()) for u, v in edge_list]
         else:
-            self.augmented_pos_edges = None
+            self.augmented_pos_embeddings = None
 
     def clear_augmented_edges(self):
-        self.augmented_pos_edges = None
+        self.augmented_pos_embeddings = None
 
     def get_encoder_state(self):
         return self.encoder.state_dict()
