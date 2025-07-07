@@ -25,4 +25,4 @@ if __name__ == "__main__":
     point = 9086
     anchor_list = read_anchors(datapath)
     anchor_list = parse_anchors(anchor_list, point)
-    print(len(anchor_list))
+    print(anchor_list)
