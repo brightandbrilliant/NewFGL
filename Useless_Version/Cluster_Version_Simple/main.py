@@ -92,8 +92,8 @@ def evaluate_all_clients(clients, cluster_labels, use_test=False):
     return avg
 
 if __name__ == "__main__":
-    data_dir = "../Parsed_dataset/dblp"
-    anchor_path = "../dataset/dblp/anchors.txt"
+    data_dir = "../../Parsed_dataset/dblp"
+    anchor_path = "../../dataset/dblp/anchors.txt"
     pyg_data_files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")])
 
     encoder_params = {

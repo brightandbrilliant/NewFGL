@@ -174,7 +174,7 @@ if __name__ == "__main__":
     pyg_path1 = "../Parsed_dataset/dblp/dblp_1.pt"
     pyg_path2 = "../Parsed_dataset/dblp/dblp_2.pt"
     data1, data2 = load_pyg_data(pyg_path1), load_pyg_data(pyg_path2)
-    anchor_path = "../dataset/dblp/anchors.txt"
+    anchor_path = "../../dataset/dblp/anchors.txt"
     anchor_pairs = load_anchors(anchor_path)
     print(anchor_pairs)
     results = compute_anchor_feature_differences(data1, data2, anchor_pairs)

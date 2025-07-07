@@ -15,14 +15,20 @@ Cluster_recall = [0.9253, 0.9220, 0.8935, 0.9025, 0.9028, 0.9098, 0.9240, 0.9011
 Cluster_precision = [0.8467, 0.8384, 0.8780, 0.8730, 0.8657, 0.8657, 0.8348, 0.8710, 0.8790, 0.8197]
 Cluster_F1 = [0.8842, 0.8782, 0.8855, 0.8874, 0.8839, 0.8872, 0.8772, 0.8858, 0.8851, 0.8730]
 
+# new_Cluster_Version
+new_Cluster_recall = [0.8996, 0.9027, 0.9197, 0.8949, 0.9033, 0.9184, 0.9021, 0.9086, 0.9132, 0.8958]
+new_Cluster_precision = [0.8864, 0.8714, 0.8461, 0.8734, 0.8764, 0.8524, 0.8761, 0.8652, 0.8633, 0.8823]
+new_Cluster_F1 = [0.8929, 0.8867, 0.8813, 0.8840, 0.8896, 0.8841, 0.8889, 0.8863, 0.8875, 0.8890]
+
+
 def calc_avg(data):
     return round(np.mean(data), 4)
 
 # 计算 pFGL
 Cluster = {
-    "Recall": calc_avg(Cluster_recall),
-    "Precision": calc_avg(Cluster_precision),
-    "F1": calc_avg(Cluster_F1)
+    "Recall": calc_avg(new_Cluster_recall),
+    "Precision": calc_avg(new_Cluster_precision),
+    "F1": calc_avg(new_Cluster_F1)
 }
 Cluster["Overall"] = calc_avg(list(Cluster.values()))
 

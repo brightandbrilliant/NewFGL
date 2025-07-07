@@ -3,8 +3,8 @@ import torch
 from Client import Client
 from Model.GCN import GCN
 from Model.ResMLP import ResMLP
+from Model.Transformer import EdgeTransformer
 from torch_geometric.data import Data
-from Parse_Anchors import read_anchors, parse_anchors
 from torch_geometric.transforms import RandomLinkSplit
 from torch_geometric.utils import to_undirected
 
@@ -29,9 +29,7 @@ def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
 
     return train_data
 
-
-def load_all_clients(pyg_data_paths, anchor_list, encoder_params, decoder_params,
-                     training_params, device, contrastive_weight):
+def load_all_clients(pyg_data_paths, encoder_params, decoder_params, transformer_params, training_params, device):
     clients = []
     for client_id, path in enumerate(pyg_data_paths):
         raw_data = torch.load(path)
@@ -45,8 +43,16 @@ def load_all_clients(pyg_data_paths, anchor_list, encoder_params, decoder_params
             dropout=encoder_params['dropout']
         )
 
+        transformer = EdgeTransformer(
+            input_dim=transformer_params['input_dim'],
+            hidden_dim=transformer_params['hidden_dim'],
+            num_heads=transformer_params['nhead'],
+            num_layers=transformer_params['num_layers'],
+            dropout=transformer_params['dropout']
+        )
+
         decoder = ResMLP(
-            input_dim=encoder_params['output_dim'] * 2,
+            input_dim=encoder_params['output_dim'],
             hidden_dim=decoder_params['hidden_dim'],
             num_layers=decoder_params['num_layers'],
             dropout=decoder_params['dropout']
@@ -56,9 +62,8 @@ def load_all_clients(pyg_data_paths, anchor_list, encoder_params, decoder_params
             client_id=client_id,
             data=data,
             encoder=encoder,
+            transformer=transformer,
             decoder=decoder,
-            anchor_list=anchor_list,
-            contrastive_weight=contrastive_weight,
             device=device,
             lr=training_params['lr'],
             weight_decay=training_params['weight_decay']
@@ -76,23 +81,19 @@ def average_state_dicts(state_dicts):
 
 def evaluate_all_clients(clients, use_test=False):
     metrics = []
-    zs = []
     for client in clients:
-        acc, recall, precision, f1, z = client.evaluate(use_test)
+        acc, recall, precision, f1 = client.evaluate(use_test)
         metrics.append((acc, recall, precision, f1))
-        zs.append(z)
-        print(f"Client {client.client_id}: Acc={acc:.4f}, Recall={recall:.4f}, "
-              f"Prec={precision:.4f}, F1={f1:.4f}")
+        print(f"Client {client.client_id}: Acc={acc:.4f}, Recall={recall:.4f}, Prec={precision:.4f}, F1={f1:.4f}")
     avg_metrics = torch.tensor(metrics).mean(dim=0).tolist()
     print(f"\n===> Average Metrics: Acc={avg_metrics[0]:.4f}, Recall={avg_metrics[1]:.4f}, "
           f"Prec={avg_metrics[2]:.4f}, F1={avg_metrics[3]:.4f}")
-    return avg_metrics, zs
+    return avg_metrics
 
 
 if __name__ == "__main__":
     # 1. 配置路径与参数
-    data_dir = "../Parsed_dataset/dblp"
-    anchor_path = "../dataset/dblp/anchors.txt"
+    data_dir = "../../Parsed_dataset/dblp"
     pyg_data_files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")])
 
     encoder_params = {
@@ -103,9 +104,17 @@ if __name__ == "__main__":
         'dropout': 0.5
     }
 
+    transformer_params = {
+        'input_dim': 64,
+        'hidden_dim': 64,
+        'nhead': 4,
+        'num_layers': 3,
+        'dropout': 0.4
+    }
+
     decoder_params = {
         'hidden_dim': 128,
-        'num_layers': 8,
+        'num_layers': 4,
         'dropout': 0.3
     }
 
@@ -115,55 +124,60 @@ if __name__ == "__main__":
         'local_epochs': 5
     }
 
-    contrastive_weight = 1.0
     num_rounds = 600
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    anchor_list = read_anchors(anchor_path)
-    point = 9086
-    anchor_list = parse_anchors(anchor_list, point)
-    clients = load_all_clients(pyg_data_files, anchor_list, encoder_params,
-                               decoder_params, training_params, device, contrastive_weight)
+    # 2. 初始化客户端
+    clients = load_all_clients(pyg_data_files, encoder_params, decoder_params, transformer_params, training_params, device)
 
     best_f1 = -1
     best_encoder_state = None
-    best_decoder_states = None
+    best_transformer_state = None
+    best_decoder_states = []
 
     print("\n================ Federated Training Start ================\n")
     for rnd in range(1, num_rounds + 1):
         print(f"\n--- Round {rnd} ---")
 
-        # 每轮前：各客户端注入 peer_z（对比目标嵌入）
-        with torch.no_grad():
-            zs = [client.encoder(client.data.x.to(device), client.data.edge_index.to(device)) for client in clients]
-        clients[0].peer_z = zs[1].detach()
-        clients[1].peer_z = zs[0].detach()
-
+        # 3. 每个客户端本地训练
         for client in clients:
             for _ in range(training_params['local_epochs']):
                 loss = client.train()
 
+        # 4. 聚合 encoder 和 decoder（Transformer 个性化，不参与聚合）
         encoder_states = [client.get_encoder_state() for client in clients]
+        transformer_states = [client.get_transformer_state() for client in clients]
         decoder_states = [client.get_decoder_state() for client in clients]
 
         global_encoder_state = average_state_dicts(encoder_states)
+        global_transformer_state = average_state_dicts(transformer_states)
+        # global_decoder_state = average_state_dicts(decoder_states)
 
+        # 5. 同步 encoder 和 decoder
         for client in clients:
             client.set_encoder_state(global_encoder_state)
+            client.set_transformer_state(global_transformer_state)
+            # client.set_decoder_state(global_decoder_state)
 
-        metrics, zs_ = evaluate_all_clients(clients, False)
+        # 6. 联邦评估
+        avg_acc, avg_recall, avg_prec, avg_f1 = evaluate_all_clients(clients)
 
-        if metrics[3] > best_f1:
-            best_f1 = metrics[3]
+        if avg_f1 > best_f1:
+            best_f1 = avg_f1
             best_encoder_state = global_encoder_state
+            best_transformer_state = global_transformer_state
             best_decoder_states = decoder_states
             print("===> New best global model saved.")
 
     print("\n================ Federated Training Finished ================\n")
 
-    for i, client in enumerate(clients):
+    # 7. 最终模型评估（Transformer 保留各自个性化状态）
+    cnt = 0
+    for client in clients:
         client.set_encoder_state(best_encoder_state)
-        client.set_decoder_state(best_decoder_states[i])
+        client.set_transformer_state(best_transformer_state)
+        client.set_decoder_state(best_decoder_states[cnt])
+        cnt = cnt+1
 
     print("\n================ Final Evaluation ================")
-    evaluate_all_clients(clients, True)
+    evaluate_all_clients(clients, use_test=True)
