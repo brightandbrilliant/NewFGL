@@ -187,7 +187,7 @@ class Client:
 
         return filtered_fn, filtered_fp
 
-    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=300):
+    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=1000):
         self.encoder.eval()
         z = self.encoder(self.data.x, self.data.edge_index)
 
