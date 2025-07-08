@@ -21,7 +21,6 @@ class Client:
         self.hard_neg_edges = None
         self.augmented_pos_embeddings = None
         self.enhance_interval = enhance_interval
-        self.all_pos_edges_from_other_client = None  # 新增：对方的所有正边
 
     def train(self):
         self.encoder.train()
@@ -29,11 +28,6 @@ class Client:
         self.optimizer.zero_grad()
 
         pos_edge_index = self.data.edge_index
-
-        # 通过注入对方所有正边
-        if self.all_pos_edges_from_other_client is not None:
-            pos_edge_index = torch.cat([pos_edge_index, self.all_pos_edges_from_other_client], dim=1)
-
         neg_edge_index = negative_sampling(
             edge_index=pos_edge_index,
             num_nodes=self.data.num_nodes,
@@ -62,13 +56,22 @@ class Client:
     # 新增：注入对方的所有正边
     def inject_all_positive_edges_from_other_client(self, other_client):
         """
-        注入对方客户端的所有正边
-        :param other_client: 另一个客户端
+        注入对方客户端的所有正边嵌入（而不是edge_index），规避编号不一致的问题
         """
         if other_client.data.edge_index is not None:
-            self.all_pos_edges_from_other_client = other_client.data.edge_index
+            with torch.no_grad():
+                z_other = other_client.encoder(
+                    other_client.data.x, other_client.data.edge_index
+                ).detach()
+
+                edge_index = other_client.data.edge_index
+                embeddings = [
+                    (z_other[u].detach(), z_other[v].detach())
+                    for u, v in edge_index.t().tolist()
+                ]
+                self.augmented_pos_embeddings = embeddings
         else:
-            self.all_pos_edges_from_other_client = None
+            self.augmented_pos_embeddings = None
 
     def train_on_hard_negatives(self):
         if self.hard_neg_edges is None:

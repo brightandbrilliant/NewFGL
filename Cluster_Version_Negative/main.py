@@ -146,23 +146,15 @@ if __name__ == "__main__":
         print(f"\n--- Round {rnd} ---")
 
         if rnd == augment_start_round:
-            print("\n===> Injecting hard negatives and augmented positives")
-            z_others = [client.encoder(client.data.x, client.data.edge_index).detach() for client in clients]
+            print("\n===> Injecting hard negatives and all positive edges from other client")
 
             for i, client in enumerate(clients):
                 fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_percent)
                 client.inject_hard_negatives(fp, cluster_labels[i], max_per_pair=300)
 
-                # Inject all positive edges or selective augmented positive edges based on the flag
-                if use_all_positive_edges:
-                    # Inject all positive edges from the other client
-                    j = 1 - i  # Assuming two clients, if i=0, j=1 and vice versa
-                    client.inject_all_positive_edges_from_other_client(clients[j])
-                else:
-                    # Inject augmented positive edges (your method)
-                    j = 1 - i
-                    edge_list = extract_augmented_positive_edges(fp, edge_dicts[j], edge_alignment1 if i == 0 else edge_alignment2, top_k=top_k_per_type)
-                    client.inject_augmented_positive_edges(edge_list, z_others[j])
+                # 新增：注入对方所有正边的嵌入
+                j = 1 - i
+                client.inject_all_positive_edges_from_other_client(clients[j])
 
         for client in clients:
             for _ in range(training_params['local_epochs']):
