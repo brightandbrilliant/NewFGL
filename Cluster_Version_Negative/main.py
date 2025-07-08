@@ -14,6 +14,7 @@ from Cluster import (
 from Parse_Anchors import read_anchors, parse_anchors
 from Build import build_positive_edge_dict, build_edge_type_alignment
 
+
 def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     data = data.to(device)
     data.edge_index = to_undirected(data.edge_index, num_nodes=data.num_nodes)
@@ -26,14 +27,16 @@ def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     )
     train_data, val_data, test_data = transform(data)
 
+    data = train_data
     val_mask = val_data.edge_label.bool()
     test_mask = test_data.edge_label.bool()
-    train_data.val_pos_edge_index = val_data.edge_label_index[:, val_mask]
-    train_data.val_neg_edge_index = val_data.edge_label_index[:, ~val_mask]
-    train_data.test_pos_edge_index = test_data.edge_label_index[:, test_mask]
-    train_data.test_neg_edge_index = test_data.edge_label_index[:, ~test_mask]
+    data.val_pos_edge_index = val_data.edge_label_index[:, val_mask]
+    data.val_neg_edge_index = val_data.edge_label_index[:, ~val_mask]
+    data.test_pos_edge_index = test_data.edge_label_index[:, test_mask]
+    data.test_neg_edge_index = test_data.edge_label_index[:, ~test_mask]
 
     return train_data
+
 
 def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device, nClusters=10, enhance_interval=5):
     clients, all_cluster_labels, raw_data_list, edge_dicts = [], [], [], []
@@ -66,11 +69,13 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
 
     return clients, all_cluster_labels, raw_data_list, edge_dicts
 
+
 def average_state_dicts(state_dicts):
     avg_state = {}
     for key in state_dicts[0].keys():
         avg_state[key] = torch.stack([sd[key] for sd in state_dicts], dim=0).mean(dim=0)
     return avg_state
+
 
 def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment, top_k=100):
     selected_edges = []
@@ -81,6 +86,7 @@ def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment,
             selected_edges.extend(candidate_edges[:top_k])
     return selected_edges
 
+
 def evaluate_all_clients(clients, cluster_labels, use_test=False):
     metrics = []
     for i, client in enumerate(clients):
@@ -90,6 +96,7 @@ def evaluate_all_clients(clients, cluster_labels, use_test=False):
     avg = torch.tensor(metrics).mean(dim=0).tolist()
     print(f"\n===> Average: Acc={avg[0]:.4f}, Recall={avg[1]:.4f}, Prec={avg[2]:.4f}, F1={avg[3]:.4f}")
     return avg
+
 
 if __name__ == "__main__":
     data_dir = "../Parsed_dataset/dblp"
@@ -113,6 +120,9 @@ if __name__ == "__main__":
     top_k_per_type = 100
     nClusters = 10
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Flag to choose between using your method or full-positive-edge injection method
+    use_all_positive_edges = False  # Set this flag to True if you want to inject all positive edges from the other client
 
     clients, cluster_labels, raw_data_list, edge_dicts = load_all_clients(
         pyg_data_files, encoder_params, decoder_params, training_params, device, nClusters, enhance_interval
@@ -142,9 +152,17 @@ if __name__ == "__main__":
             for i, client in enumerate(clients):
                 fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_percent)
                 client.inject_hard_negatives(fp, cluster_labels[i], max_per_pair=300)
-                j = 1 - i
-                edge_list = extract_augmented_positive_edges(fp, edge_dicts[j], edge_alignment1 if i == 0 else edge_alignment2, top_k=top_k_per_type)
-                client.inject_augmented_positive_edges(edge_list, z_others[j])
+
+                # Inject all positive edges or selective augmented positive edges based on the flag
+                if use_all_positive_edges:
+                    # Inject all positive edges from the other client
+                    j = 1 - i  # Assuming two clients, if i=0, j=1 and vice versa
+                    client.inject_all_positive_edges_from_other_client(clients[j])
+                else:
+                    # Inject augmented positive edges (your method)
+                    j = 1 - i
+                    edge_list = extract_augmented_positive_edges(fp, edge_dicts[j], edge_alignment1 if i == 0 else edge_alignment2, top_k=top_k_per_type)
+                    client.inject_augmented_positive_edges(edge_list, z_others[j])
 
         for client in clients:
             for _ in range(training_params['local_epochs']):

@@ -21,6 +21,7 @@ class Client:
         self.hard_neg_edges = None
         self.augmented_pos_embeddings = None
         self.enhance_interval = enhance_interval
+        self.all_pos_edges_from_other_client = None  # 新增：对方的所有正边
 
     def train(self):
         self.encoder.train()
@@ -28,6 +29,11 @@ class Client:
         self.optimizer.zero_grad()
 
         pos_edge_index = self.data.edge_index
+
+        # 通过注入对方所有正边
+        if self.all_pos_edges_from_other_client is not None:
+            pos_edge_index = torch.cat([pos_edge_index, self.all_pos_edges_from_other_client], dim=1)
+
         neg_edge_index = negative_sampling(
             edge_index=pos_edge_index,
             num_nodes=self.data.num_nodes,
@@ -53,6 +59,17 @@ class Client:
 
         return loss.item()
 
+    # 新增：注入对方的所有正边
+    def inject_all_positive_edges_from_other_client(self, other_client):
+        """
+        注入对方客户端的所有正边
+        :param other_client: 另一个客户端
+        """
+        if other_client.data.edge_index is not None:
+            self.all_pos_edges_from_other_client = other_client.data.edge_index
+        else:
+            self.all_pos_edges_from_other_client = None
+
     def train_on_hard_negatives(self):
         if self.hard_neg_edges is None:
             return 0.0
@@ -71,7 +88,7 @@ class Client:
         ])
         pred = torch.cat([pos_pred, neg_pred], dim=0)
 
-        loss = self.criterion(pred.squeeze(), labels)
+        loss = self.criterion(pred.squeeze(), labels.squeeze())
         loss.backward()
         self.optimizer.step()
 
@@ -187,7 +204,7 @@ class Client:
 
         return filtered_fn, filtered_fp
 
-    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=1000):
+    def inject_hard_negatives(self, target_pairs, cluster_labels, max_per_pair=300):
         self.encoder.eval()
         z = self.encoder(self.data.x, self.data.edge_index)
 
