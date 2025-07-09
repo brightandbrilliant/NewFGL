@@ -123,5 +123,5 @@ def inspect_pyg_data_file(file_path: str):
 
 
 if __name__ == "__main__":
-    data_path = "../Parsed_dataset/dblp/dblp_2.pt"
+    data_path = "../Parsed_dataset/wd/wd_1.pt"
     inspect_pyg_data_file(data_path)

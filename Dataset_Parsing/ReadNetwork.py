@@ -47,10 +47,10 @@ def draw_static_graph(G, title="Graph", node_color='skyblue'):
 
 
 if __name__ == "__main__":
-    data_path = '../dataset/dblp/networks'
-    g1 = read_network(data_path, 0)
-    g2 = read_network(data_path, 1)
-    # inspect_graph_data(g1)
-    # inspect_graph_data(g2)
-    draw_static_graph(g1, title="G1 - Network")
-    draw_static_graph(g2, title="G2 - Network")
+    data_path = '../dataset/wd/networks'
+    g1 = read_network(data_path, 0) # 0 - 9713
+    g2 = read_network(data_path, 1) # 9714 - 19239
+    inspect_graph_data(g1)
+    inspect_graph_data(g2)
+    # draw_static_graph(g1, title="G1 - Network")
+    # draw_static_graph(g2, title="G2 - Network")

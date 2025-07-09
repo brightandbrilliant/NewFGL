@@ -74,14 +74,14 @@ def build_local_pyg_graphs(
 
 
 if __name__ == "__main__":
-    data_path_prefix = "../Parsed_dataset/dblp/dblp"
-    gdata_path = '../dataset/dblp/networks'
+    data_path_prefix = "../Parsed_dataset/wd/wd"
+    gdata_path = '../dataset/wd/networks'
     g1 = read_network(gdata_path, 0)
     g2 = read_network(gdata_path, 1)
     graphs = (g1, g2)
-    fdatapath = "../dataset/dblp/user_features.pkl"
+    fdatapath = "../dataset/wd/user_features.pkl"
     user_features = read_user_features(fdatapath)
-    node_id_ranges = [(0, 9085), (9086, 18410)]
+    node_id_ranges = [(0, 9713), (9714, 19239)]
     build_local_pyg_graphs( data_path_prefix, graphs, user_features, node_id_ranges)
 
 
