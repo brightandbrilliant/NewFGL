@@ -22,7 +22,7 @@ def parse_anchors(anchors: List, point: int):
 
 if __name__ == "__main__":
     datapath = "../dataset/dblp/anchors.txt"
-    point = 9086
+    point = 9714
     anchor_list = read_anchors(datapath)
     anchor_list = parse_anchors(anchor_list, point)
     print(anchor_list)

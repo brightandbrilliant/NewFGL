@@ -99,8 +99,8 @@ def evaluate_all_clients(clients, cluster_labels, use_test=False):
 
 
 if __name__ == "__main__":
-    data_dir = "../Parsed_dataset/dblp"
-    anchor_path = "../dataset/dblp/anchors.txt"
+    data_dir = "../Parsed_dataset/wd"
+    anchor_path = "../dataset/wd/anchors.txt"
     pyg_data_files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")])
 
     encoder_params = {
@@ -122,14 +122,14 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Flag to choose between using your method or full-positive-edge injection method
-    use_all_positive_edges = False  # Set this flag to True if you want to inject all positive edges from the other client
+    # use_all_positive_edges = False
 
     clients, cluster_labels, raw_data_list, edge_dicts = load_all_clients(
         pyg_data_files, encoder_params, decoder_params, training_params, device, nClusters, enhance_interval
     )
 
     anchor_raw = read_anchors(anchor_path)
-    anchor_pairs = parse_anchors(anchor_raw, point=9086)
+    anchor_pairs = parse_anchors(anchor_raw, point=9714)
     results = compute_anchor_feature_differences(raw_data_list[0], raw_data_list[1], anchor_pairs)
     co_matrix = build_cluster_cooccurrence_matrix(cluster_labels[0], cluster_labels[1], results, nClusters, top_percent=0.75)
     alignment1 = extract_clear_alignments(co_matrix, min_ratio=0.25, min_count=30, mode=1)

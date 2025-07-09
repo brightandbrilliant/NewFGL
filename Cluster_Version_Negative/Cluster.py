@@ -49,7 +49,7 @@ def load_pyg_data(file_path: str) -> Data:
 
 def load_anchors(file_path: str):
     anchor_list = read_anchors(file_path)
-    point = 9086
+    point = 9714
     anchor_list = parse_anchors(anchor_list, point)
     return anchor_list
 
@@ -171,10 +171,10 @@ def extract_clear_alignments(M, min_ratio=0.3, min_count=30, mode=1):
 
 
 if __name__ == "__main__":
-    pyg_path1 = "../Parsed_dataset/dblp/dblp_1.pt"
-    pyg_path2 = "../Parsed_dataset/dblp/dblp_2.pt"
+    pyg_path1 = "../Parsed_dataset/wd/wd_1.pt"
+    pyg_path2 = "../Parsed_dataset/wd/wd_2.pt"
     data1, data2 = load_pyg_data(pyg_path1), load_pyg_data(pyg_path2)
-    anchor_path = "../dataset/dblp/anchors.txt"
+    anchor_path = "../dataset/wd/anchors.txt"
     anchor_pairs = load_anchors(anchor_path)
     print(anchor_pairs)
     results = compute_anchor_feature_differences(data1, data2, anchor_pairs)
