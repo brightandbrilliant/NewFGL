@@ -156,7 +156,7 @@ if __name__ == "__main__":
     # 初始化滑动窗口
     sliding_fn_window = [deque(maxlen=5) for _ in range(len(clients))]
     sliding_fp_window = [deque(maxlen=5) for _ in range(len(clients))]
-    sliding_loss_window = [deque(maxlen=100) for _ in range(len(clients))]
+    sliding_loss_window = [deque(maxlen=30) for _ in range(len(clients))]
     sliding_second_value_window = [deque(maxlen=10) for _ in range(len(clients))]
     augment_flag = [False, False]
     rnds = [-1, -1]
@@ -199,6 +199,7 @@ if __name__ == "__main__":
                 loss_avg += loss
 
             if augment_flag[i] is True and rnd % enhance_interval == 0:
+                print("Augmentation Implementing.")
                 client.train_on_hard_negatives()
                 client.train_on_augmented_positives()
 

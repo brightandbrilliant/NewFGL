@@ -84,10 +84,10 @@ def judge_loss_window_poly(loss_window, second_deriv_window, deg=4):
 
     second_deriv_window.append(second_value)
 
-    second_deriv_window = list(second_deriv_window)
+    second_deriv_window_ = list(second_deriv_window)
     # 计算差分序列
-    diffs = np.diff(second_deriv_window[-5:])  # 最近 5 个导数的变化趋势
-    curvature_flattened = second_deriv_window[-1] > -1e-5
+    diffs = np.diff(second_deriv_window_[-5:])  # 最近 5 个导数的变化趋势
+    curvature_flattened = second_deriv_window_[-1] > -1e-4
 
     # 如果二阶导的变化趋势是持续向上（意味着凹性持续减弱）
     flag = all(d > 0 for d in diffs) and curvature_flattened
@@ -97,7 +97,7 @@ def judge_loss_window_poly(loss_window, second_deriv_window, deg=4):
 
 # 返回 True 则进入增强期，返回 False 则不进入增强期
 def judge_loss_window(loss_window: deque, second_deriv_window: deque, deg: int):
-    if len(loss_window) < 100:
+    if len(loss_window) < 30:
         return False, second_deriv_window
     if has_excessive_oscillations(loss_window) is True:
         return False, second_deriv_window
