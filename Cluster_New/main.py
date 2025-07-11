@@ -130,7 +130,6 @@ if __name__ == "__main__":
     training_params = {'lr': 0.001, 'weight_decay': 1e-4, 'local_epochs': 5}
 
     num_rounds = 1000
-    augment_start_round = 300
     top_fp_fn_percent = 0.3
     enhance_interval = 10
     top_k_per_type = 100
@@ -199,7 +198,7 @@ if __name__ == "__main__":
                 loss = client.train()
                 loss_avg += loss
 
-            if rnd >= augment_start_round and rnd % enhance_interval == 0:
+            if augment_flag[i] is True and rnd % enhance_interval == 0:
                 client.train_on_hard_negatives()
                 client.train_on_augmented_positives()
 

@@ -84,6 +84,7 @@ def judge_loss_window_poly(loss_window, second_deriv_window, deg=4):
 
     second_deriv_window.append(second_value)
 
+    second_deriv_window = list(second_deriv_window)
     # 计算差分序列
     diffs = np.diff(second_deriv_window[-5:])  # 最近 5 个导数的变化趋势
     curvature_flattened = second_deriv_window[-1] > -1e-5
