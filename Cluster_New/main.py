@@ -13,7 +13,9 @@ from Cluster import (
     extract_clear_alignments
 )
 from Parse_Anchors import read_anchors, parse_anchors
-from Build import build_positive_edge_dict, build_edge_type_alignment
+from Utils import build_positive_edge_dict, build_edge_type_alignment, judge_loss_window
+
+
 
 def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     data = data.to(device)
@@ -35,6 +37,8 @@ def split_client_data(data, val_ratio=0.1, test_ratio=0.1, device='cpu'):
     train_data.test_neg_edge_index = test_data.edge_label_index[:, ~test_mask]
 
     return train_data
+
+
 
 def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_params, device, nClusters=10, enhance_interval=5):
     clients, all_cluster_labels, raw_data_list, edge_dicts = [], [], [], []
@@ -66,11 +70,15 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
 
     return clients, all_cluster_labels, raw_data_list, edge_dicts
 
+
+
 def average_state_dicts(state_dicts):
     avg_state = {}
     for key in state_dicts[0].keys():
         avg_state[key] = torch.stack([sd[key] for sd in state_dicts], dim=0).mean(dim=0)
     return avg_state
+
+
 
 def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment, top_k=100):
     selected_edges = []
@@ -80,6 +88,8 @@ def extract_augmented_positive_edges(target_fp_types, edge_dict, edge_alignment,
             candidate_edges = edge_dict.get((c1_p, c2_p), [])
             selected_edges.extend(candidate_edges[:top_k])
     return selected_edges
+
+
 
 def evaluate_all_clients(clients, cluster_labels, use_test=False):
     metrics = []
@@ -91,14 +101,18 @@ def evaluate_all_clients(clients, cluster_labels, use_test=False):
     print(f"\n===> Average: Acc={avg[0]:.4f}, Recall={avg[1]:.4f}, Prec={avg[2]:.4f}, F1={avg[3]:.4f}")
     return avg
 
-def aggregate_fp_from_window(fp_window, top_percent=0.3):
+
+
+def aggregate_from_window(sliding_window, top_percent=0.3):
     aggregate = defaultdict(int)
-    for round_fp in fp_window:
-        for pair, count in round_fp.items():
+    for it in sliding_window:
+        for pair, count in it.items():
             aggregate[pair] += count
     sorted_items = sorted(aggregate.items(), key=lambda x: x[1], reverse=True)
     cutoff = max(1, int(len(sorted_items) * top_percent))
     return dict(sorted_items[:cutoff])
+
+
 
 if __name__ == "__main__":
     data_dir = "../Parsed_dataset/wd"
@@ -117,7 +131,7 @@ if __name__ == "__main__":
 
     num_rounds = 1000
     augment_start_round = 300
-    top_fp_percent = 0.3
+    top_fp_fn_percent = 0.3
     enhance_interval = 10
     top_k_per_type = 100
     nClusters = 7
@@ -141,7 +155,12 @@ if __name__ == "__main__":
     best_decoder_states = None
 
     # 初始化滑动窗口
+    sliding_fn_window = [deque(maxlen=5) for _ in range(len(clients))]
     sliding_fp_window = [deque(maxlen=5) for _ in range(len(clients))]
+    sliding_loss_window = [deque(maxlen=100) for _ in range(len(clients))]
+    sliding_second_value_window = [deque(maxlen=10) for _ in range(len(clients))]
+    augment_flag = [False, False]
+    rnds = [-1, -1]
 
     print("\n================ Federated Training Start ================")
     for rnd in range(1, num_rounds + 1):
@@ -150,28 +169,43 @@ if __name__ == "__main__":
         z_others = [client.encoder(client.data.x, client.data.edge_index).detach() for client in clients]
 
         for i, client in enumerate(clients):
-            _, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_percent)
+            fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_fn_percent)
+            sliding_fn_window[i].append(fn)
             sliding_fp_window[i].append(fp)
 
-            if rnd >= augment_start_round and rnd % enhance_interval == 0:
-                aggregated_fp = aggregate_fp_from_window(sliding_fp_window[i], top_percent=top_fp_percent)
+            if rnd > 100 and rnd % 10 == 0 and augment_flag[i] is False:
+                augment_flag[i], sliding_second_value_window[i] = judge_loss_window(sliding_loss_window[i],
+                                                                        sliding_second_value_window[i], 4)
+                if augment_flag[i] is True:
+                    rnds[i] = rnd
+
+            if augment_flag[i] is True and rnd % enhance_interval == 0:
+                aggregated_fn = aggregate_from_window(sliding_fn_window[i], top_percent=top_fp_fn_percent)
+                aggregated_fp = aggregate_from_window(sliding_fp_window[i], top_percent=top_fp_fn_percent)
                 client.inject_hard_negatives(aggregated_fp, cluster_labels[i], max_per_pair=300)
 
                 j = 1 - i
                 edge_list = extract_augmented_positive_edges(
-                    aggregated_fp,
+                    aggregated_fn,
                     edge_dicts[j],
                     edge_alignment1 if i == 0 else edge_alignment2,
                     top_k=top_k_per_type
                 )
                 client.inject_augmented_positive_edges(edge_list, z_others[j])
 
-        for client in clients:
+        for i, client in enumerate(clients):
+            loss_avg = 0
             for _ in range(training_params['local_epochs']):
-                client.train()
+                loss = client.train()
+                loss_avg += loss
+
             if rnd >= augment_start_round and rnd % enhance_interval == 0:
                 client.train_on_hard_negatives()
                 client.train_on_augmented_positives()
+
+            loss_avg /= training_params['local_epochs']
+            sliding_loss_window[i].append(loss_avg)
+            print(f'Client{i} loss: {loss_avg}')
 
         encoder_states = [client.get_encoder_state() for client in clients]
         decoder_states = [client.get_decoder_state() for client in clients]
@@ -195,3 +229,4 @@ if __name__ == "__main__":
 
     print("\n================ Final Evaluation ================")
     evaluate_all_clients(clients, cluster_labels, use_test=True)
+    print(f"Augmentation Start: Client1: {rnds[0]}; Client2: {rnds[1]}")
