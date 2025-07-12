@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -43,68 +44,24 @@ def build_positive_edge_dict(data, cluster_labels):
     return edge_dict
 
 
-def has_excessive_oscillations(loss_window) -> bool:
-    if len(loss_window) < 5:
-        return True  # 数据太少，保守地认为仍处于下降
-
-    delta = np.diff(loss_window)
-    mean, std = np.mean(delta), np.std(delta)
-    # 统计大于 2 倍标准差的震荡点数量
-    num_spikes = np.sum(np.abs(delta - mean) > 2 * std)
-
-    # 若大幅震荡超过20%则判定为仍在剧烈变化期
-    return num_spikes >= max(1, len(delta) // 5)
-
-
-def judge_loss_window_poly(loss_window, second_deriv_window, deg=4):
-    """
-    用多项式拟合loss窗口并判断是否已脱离快速下降期。
-    参数:
-        loss_window: 长度为100的 loss 序列（list 或 deque）
-        deg: 多项式拟合的阶数，默认5阶
-    返回:
-        bool：True 表示已趋于平稳；False 表示仍在快速下降
-    """
-    if isinstance(loss_window, torch.Tensor):
-        y = loss_window.cpu().numpy()
-    else:
-        y = np.array(loss_window)
-
-    x = np.arange(len(y))
-
-    # 多项式拟合
-    coefs = np.polyfit(x, y, deg=deg)
-    poly = np.poly1d(coefs)
-
-    # 计算二阶导（对应二次导数系数 * 2 * 1）
-    second_deriv = np.polyder(poly, m=2)
-    second_values = second_deriv(x)
-
-    second_value = np.mean(second_values)
-
-    second_deriv_window.append(second_value)
-
-    second_deriv_window_ = list(second_deriv_window)
-    # 计算差分序列
-    diffs = np.diff(second_deriv_window_[-5:])  # 最近 5 个导数的变化趋势
-    curvature_flattened = second_deriv_window_[-1] > -1e-4
-
-    # 如果二阶导的变化趋势是持续向上（意味着凹性持续减弱）
-    flag = all(d > 0 for d in diffs) and curvature_flattened
-
-    return flag, second_deriv_window
-
-
 # 返回 True 则进入增强期，返回 False 则不进入增强期
-def judge_loss_window(loss_window: deque, second_deriv_window: deque, deg: int):
+def judge_loss_window(loss_window: deque):
     if len(loss_window) < 30:
-        return False, second_deriv_window
-    if has_excessive_oscillations(loss_window) is True:
-        return False, second_deriv_window
+        return False
+    return True
 
-    flag, second_deriv_window_ = judge_loss_window_poly(loss_window, second_deriv_window, deg)
-    if len(second_deriv_window_) < 5:
-        return False, second_deriv_window_
-    else:
-        return flag, second_deriv_window_
+def draw_loss_plot(loss_record: list):
+    x = []
+    for i in range(1, len(loss_record)+1):
+        x.append(i)
+    plt.plot(x, loss_record, marker='o', linestyle='-', color='b', label='Client')
+
+    plt.title('Loss-Round', fontsize=16)
+    plt.xlabel('Round', fontsize=12)
+    plt.ylabel('Loss', fontsize=12)
+
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend()
+
+    plt.show()
 

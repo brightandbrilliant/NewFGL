@@ -13,7 +13,9 @@ from Cluster import (
     extract_clear_alignments
 )
 from Parse_Anchors import read_anchors, parse_anchors
-from Utils import build_positive_edge_dict, build_edge_type_alignment, judge_loss_window
+from Utils import (build_positive_edge_dict,
+                   build_edge_type_alignment, judge_loss_window,
+                   draw_loss_plot)
 
 
 
@@ -157,7 +159,7 @@ if __name__ == "__main__":
     sliding_fn_window = [deque(maxlen=5) for _ in range(len(clients))]
     sliding_fp_window = [deque(maxlen=5) for _ in range(len(clients))]
     sliding_loss_window = [deque(maxlen=30) for _ in range(len(clients))]
-    sliding_second_value_window = [deque(maxlen=10) for _ in range(len(clients))]
+    loss_record = [[],[]]
     augment_flag = [False, False]
     rnds = [-1, -1]
 
@@ -172,9 +174,8 @@ if __name__ == "__main__":
             sliding_fn_window[i].append(fn)
             sliding_fp_window[i].append(fp)
 
-            if rnd > 100 and rnd % 10 == 0 and augment_flag[i] is False:
-                augment_flag[i], sliding_second_value_window[i] = judge_loss_window(sliding_loss_window[i],
-                                                                        sliding_second_value_window[i], 4)
+            if rnd >= 100 and rnd % 10 == 0 and augment_flag[i] is False:
+                augment_flag[i] = judge_loss_window(sliding_loss_window[i])
                 if augment_flag[i] is True:
                     rnds[i] = rnd
 
@@ -205,7 +206,8 @@ if __name__ == "__main__":
 
             loss_avg /= training_params['local_epochs']
             sliding_loss_window[i].append(loss_avg)
-            print(f'Client{i} loss: {loss_avg}')
+            loss_record[i].append(loss_avg)
+            # print(f'Client{i} loss: {loss_avg}')
 
         encoder_states = [client.get_encoder_state() for client in clients]
         decoder_states = [client.get_decoder_state() for client in clients]
@@ -229,4 +231,7 @@ if __name__ == "__main__":
 
     print("\n================ Final Evaluation ================")
     evaluate_all_clients(clients, cluster_labels, use_test=True)
-    print(f"Augmentation Start: Client1: {rnds[0]}; Client2: {rnds[1]}")
+    # print(f"Augmentation Start: Client1: {rnds[0]}; Client2: {rnds[1]}")
+    draw_loss_plot(loss_record[0])
+    draw_loss_plot(loss_record[1])
+
