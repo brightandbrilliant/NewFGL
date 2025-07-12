@@ -131,9 +131,9 @@ if __name__ == "__main__":
     decoder_params = {'hidden_dim': 128, 'num_layers': 8, 'dropout': 0.3}
     training_params = {'lr': 0.001, 'weight_decay': 1e-4, 'local_epochs': 5}
 
-    num_rounds = 1000
+    num_rounds = 300
     top_fp_fn_percent = 0.3
-    enhance_interval = 10
+    enhance_interval = 30
     top_k_per_type = 100
     nClusters = 7
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -158,10 +158,11 @@ if __name__ == "__main__":
     # 初始化滑动窗口
     sliding_fn_window = [deque(maxlen=5) for _ in range(len(clients))]
     sliding_fp_window = [deque(maxlen=5) for _ in range(len(clients))]
-    sliding_loss_window = [deque(maxlen=30) for _ in range(len(clients))]
+    sliding_loss_window = [deque(maxlen=20) for _ in range(len(clients))]
     loss_record = [[],[]]
     augment_flag = [False, False]
     rnds = [-1, -1]
+    last_diff = [10000,10000] # 设一个很大的值
 
     print("\n================ Federated Training Start ================")
     for rnd in range(1, num_rounds + 1):
@@ -174,8 +175,8 @@ if __name__ == "__main__":
             sliding_fn_window[i].append(fn)
             sliding_fp_window[i].append(fp)
 
-            if rnd >= 100 and rnd % 10 == 0 and augment_flag[i] is False:
-                augment_flag[i] = judge_loss_window(sliding_loss_window[i])
+            if rnd >= 30 and rnd % 5 == 0 and augment_flag[i] is False:
+                augment_flag[i], last_diff[i] = judge_loss_window(sliding_loss_window[i], last_diff[i])
                 if augment_flag[i] is True:
                     rnds[i] = rnd
 

@@ -45,10 +45,14 @@ def build_positive_edge_dict(data, cluster_labels):
 
 
 # 返回 True 则进入增强期，返回 False 则不进入增强期
-def judge_loss_window(loss_window: deque):
-    if len(loss_window) < 30:
-        return False
-    return True
+def judge_loss_window(loss_window: deque, last_diff: float):
+    diff_window = []
+    for i in range(1, len(loss_window)):
+        diff_window.append(abs(loss_window[i]-loss_window[i-1]))
+    now_diff = np.mean(diff_window)
+    if abs(now_diff - last_diff)/last_diff <= 0.1:
+        return True, now_diff
+    return False, now_diff
 
 def draw_loss_plot(loss_record: list):
     x = []
