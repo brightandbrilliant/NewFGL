@@ -207,6 +207,9 @@ if __name__ == "__main__":
             if augment_flag[i] is True and rnd % enhance_interval == 0:
                 print("Augmentation Implementing.")
                 client.train_on_hard_negatives()
+                fn_fp_ignore_flag = True
+            if augment_flag[i] is True and rnd % enhance_interval == 0:
+                print("Augmentation Implementing.")
                 client.train_on_augmented_positives()
                 fn_fp_ignore_flag = True
 
