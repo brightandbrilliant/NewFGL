@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 from torch_geometric.utils import negative_sampling
 from collections import defaultdict
 import random
@@ -50,7 +49,7 @@ class Client:
 
         return loss.item()
 
-    def train_on_hard_negatives(self):
+    def train_on_hard_negatives(self, loss_weight=1.0):
         """增强训练：在增强负边上训练"""
         if self.hard_neg_edges is None:
             return 0.0
@@ -59,23 +58,39 @@ class Client:
         self.decoder.train()
         self.optimizer.zero_grad()
 
+        # 原始边部分
+        pos_edge_index = self.data.edge_index
+        neg_edge_index = negative_sampling(
+            edge_index=pos_edge_index,
+            num_nodes=self.data.num_nodes,
+            num_neg_samples=pos_edge_index.size(1)
+        )
+
         z = self.encoder(self.data.x, self.data.edge_index)
-        pos_pred = self.decoder(z[self.data.edge_index[0]], z[self.data.edge_index[1]])
-        neg_pred = self.decoder(z[self.hard_neg_edges[0]], z[self.hard_neg_edges[1]])
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred_ori = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
 
-        labels = torch.cat([
+        labels_ori = torch.cat([
             torch.ones(pos_pred.size(0), device=self.device),
-            torch.zeros(neg_pred.size(0), device=self.device)
+            torch.zeros(neg_pred_ori.size(0), device=self.device)
         ])
-        pred = torch.cat([pos_pred, neg_pred], dim=0)
+        pred_ori = torch.cat([pos_pred, neg_pred_ori], dim=0)
+        loss_ori = self.criterion(pred_ori.squeeze(), labels_ori)
 
-        loss = self.criterion(pred.squeeze(), labels)
+        # 增强负边部分
+        neg_pred_aug = self.decoder(z[self.hard_neg_edges[0]], z[self.hard_neg_edges[1]])
+        labels_aug = torch.zeros(neg_pred_aug.size(0), device=self.device)
+        loss_aug = self.criterion(neg_pred_aug.squeeze(), labels_aug)
+
+        # 合并损失
+        loss = loss_ori + loss_weight * loss_aug
+
         loss.backward()
         self.optimizer.step()
 
         return loss.item()
 
-    def train_on_augmented_positives(self):
+    def train_on_augmented_positives(self, loss_weight=1.0):
         """增强训练：在增强正边上训练"""
         if self.augmented_pos_embeddings is None:
             return 0.0
@@ -84,18 +99,37 @@ class Client:
         self.decoder.train()
         self.optimizer.zero_grad()
 
-        z = self.encoder(self.data.x, self.data.edge_index)
-        pos_pred = self.decoder(z[self.data.edge_index[0]], z[self.data.edge_index[1]])
+        # 原始边部分
+        pos_edge_index = self.data.edge_index
+        neg_edge_index = negative_sampling(
+            edge_index=pos_edge_index,
+            num_nodes=self.data.num_nodes,
+            num_neg_samples=pos_edge_index.size(1)
+        )
 
+        z = self.encoder(self.data.x, self.data.edge_index)
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
+
+        labels = torch.cat([
+            torch.ones(pos_pred.size(0), device=self.device),
+            torch.zeros(neg_pred.size(0), device=self.device)
+        ])
+        pred = torch.cat([pos_pred, neg_pred], dim=0)
+
+        loss_ori = self.criterion(pred.squeeze(), labels)
+
+        # 增强正边部分
         z_u_aug, z_v_aug = zip(*self.augmented_pos_embeddings)
         z_u_aug = torch.stack(z_u_aug).to(self.device)
         z_v_aug = torch.stack(z_v_aug).to(self.device)
         pos_pred_aug = self.decoder(z_u_aug, z_v_aug)
+        labels_aug = torch.ones(pos_pred_aug.size(0), device=self.device)
+        loss_aug = self.criterion(pos_pred_aug.squeeze(), labels_aug)
 
-        labels = torch.ones(pos_pred.size(0) + pos_pred_aug.size(0), device=self.device)
-        pred = torch.cat([pos_pred, pos_pred_aug], dim=0)
+        # 合并损失
+        loss = loss_ori + loss_weight * loss_aug
 
-        loss = self.criterion(pred.squeeze(), labels)
         loss.backward()
         self.optimizer.step()
 

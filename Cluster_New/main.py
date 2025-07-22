@@ -115,10 +115,9 @@ def aggregate_from_window(sliding_window, top_percent=0.3):
     return dict(sorted_items[:cutoff])
 
 
-
 if __name__ == "__main__":
-    data_dir = "../Parsed_dataset/wd"
-    anchor_path = "../dataset/wd/anchors.txt"
+    data_dir = "../Parsed_dataset/dblp"
+    anchor_path = "../dataset/dblp/anchors.txt"
     pyg_data_files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")])
 
     encoder_params = {
@@ -131,11 +130,11 @@ if __name__ == "__main__":
     decoder_params = {'hidden_dim': 128, 'num_layers': 8, 'dropout': 0.3}
     training_params = {'lr': 0.001, 'weight_decay': 1e-4, 'local_epochs': 5}
 
-    num_rounds = 300
+    num_rounds = 600
     top_fp_fn_percent = 0.3
-    enhance_interval = 30
+    enhance_interval = 20
     top_k_per_type = 100
-    nClusters = 7
+    nClusters = 10
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     clients, cluster_labels, raw_data_list, edge_dicts = load_all_clients(
@@ -143,7 +142,7 @@ if __name__ == "__main__":
     )
 
     anchor_raw = read_anchors(anchor_path)
-    anchor_pairs = parse_anchors(anchor_raw, point=9714)
+    anchor_pairs = parse_anchors(anchor_raw, point=9086)
     results = compute_anchor_feature_differences(raw_data_list[0], raw_data_list[1], anchor_pairs)
     co_matrix = build_cluster_cooccurrence_matrix(cluster_labels[0], cluster_labels[1], results, nClusters, top_percent=0.75)
     alignment1 = extract_clear_alignments(co_matrix, min_ratio=0.25, min_count=30, mode=1)
@@ -179,7 +178,7 @@ if __name__ == "__main__":
             else:
                 fn_fp_ignore_flag = False
 
-            if rnd >= 30 and rnd % 5 == 0 and augment_flag[i] is False:
+            if rnd >= 150 and rnd % 5 == 0 and augment_flag[i] is False:
                 augment_flag[i], last_diff[i] = judge_loss_window(sliding_loss_window[i], last_diff[i])
                 if augment_flag[i] is True:
                     rnds[i] = rnd
@@ -208,7 +207,7 @@ if __name__ == "__main__":
                 print("Augmentation Implementing.")
                 client.train_on_hard_negatives()
                 fn_fp_ignore_flag = True
-            if augment_flag[i] is True and rnd % enhance_interval == 0:
+            if augment_flag[i] is True and rnd % enhance_interval == enhance_interval/2:
                 print("Augmentation Implementing.")
                 client.train_on_augmented_positives()
                 fn_fp_ignore_flag = True
