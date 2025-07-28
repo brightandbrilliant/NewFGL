@@ -2,6 +2,7 @@ import os
 import torch
 from Client import Client
 from Model.GCN import GCN
+from Model.GraphSage import GraphSAGE
 from Model.ResMLP import ResMLP
 from torch_geometric.data import Data
 from torch_geometric.transforms import RandomLinkSplit
@@ -35,7 +36,7 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
         raw_data = torch.load(path)
         data = split_client_data(raw_data)
 
-        encoder = GCN(
+        encoder = GraphSAGE(
             input_dim=encoder_params['input_dim'],
             hidden_dim=encoder_params['hidden_dim'],
             output_dim=encoder_params['output_dim'],
@@ -86,7 +87,7 @@ def evaluate_all_clients(clients, use_test=False):
 
 if __name__ == "__main__":
     # 1. 配置路径与参数
-    data_dir = "../Parsed_dataset/dblp"
+    data_dir = "../Parsed_dataset/wd"
     pyg_data_files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")])
 
     encoder_params = {

@@ -3,6 +3,7 @@ import torch
 from collections import deque, defaultdict
 from Client import Client
 from Model.GCN import GCN
+from Model.GraphSage import GraphSAGE
 from Model.ResMLP import ResMLP
 from torch_geometric.transforms import RandomLinkSplit
 from torch_geometric.utils import to_undirected
@@ -56,7 +57,7 @@ def load_all_clients(pyg_data_paths, encoder_params, decoder_params, training_pa
         edge_dict = build_positive_edge_dict(data, cluster_labels)
         edge_dicts.append(edge_dict)
 
-        encoder = GCN(**encoder_params)
+        encoder = GraphSAGE(**encoder_params)
         decoder = ResMLP(input_dim=encoder_params['output_dim'] * 2, **decoder_params)
 
         client = Client(
@@ -116,8 +117,8 @@ def aggregate_from_window(sliding_window, top_percent=0.3):
 
 
 if __name__ == "__main__":
-    data_dir = "../Parsed_dataset/dblp"
-    anchor_path = "../dataset/dblp/anchors.txt"
+    data_dir = "../Parsed_dataset/wd"
+    anchor_path = "../dataset/wd/anchors.txt"
     pyg_data_files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")])
 
     encoder_params = {
@@ -132,9 +133,9 @@ if __name__ == "__main__":
 
     num_rounds = 600
     top_fp_fn_percent = 0.3
-    enhance_interval = 20
+    enhance_interval = 30
     top_k_per_type = 100
-    nClusters = 10
+    nClusters = 8
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     clients, cluster_labels, raw_data_list, edge_dicts = load_all_clients(
@@ -142,7 +143,7 @@ if __name__ == "__main__":
     )
 
     anchor_raw = read_anchors(anchor_path)
-    anchor_pairs = parse_anchors(anchor_raw, point=9086)
+    anchor_pairs = parse_anchors(anchor_raw, point=9714)
     results = compute_anchor_feature_differences(raw_data_list[0], raw_data_list[1], anchor_pairs)
     co_matrix = build_cluster_cooccurrence_matrix(cluster_labels[0], cluster_labels[1], results, nClusters, top_percent=0.75)
     alignment1 = extract_clear_alignments(co_matrix, min_ratio=0.25, min_count=30, mode=1)
@@ -186,16 +187,24 @@ if __name__ == "__main__":
             if augment_flag[i] is True and rnd % enhance_interval == 0:
                 aggregated_fn = aggregate_from_window(sliding_fn_window[i], top_percent=top_fp_fn_percent)
                 aggregated_fp = aggregate_from_window(sliding_fp_window[i], top_percent=top_fp_fn_percent)
-                client.inject_hard_negatives(aggregated_fp, cluster_labels[i], max_per_pair=300)
+                # client.inject_hard_negatives(aggregated_fp, cluster_labels[i], max_per_pair=300)
 
                 j = 1 - i
-                edge_list = extract_augmented_positive_edges(
+                pos_edge_list = extract_augmented_positive_edges(
                     aggregated_fn,
                     edge_dicts[j],
                     edge_alignment1 if i == 0 else edge_alignment2,
                     top_k=top_k_per_type
                 )
-                client.inject_augmented_positive_edges(edge_list, z_others[j])
+                neg_edge_list = extract_augmented_positive_edges(
+                    aggregated_fp,
+                    edge_dicts[j],
+                    edge_alignment1 if i == 0 else edge_alignment2,
+                    top_k=top_k_per_type
+                )
+
+                client.inject_augmented_positive_edges(pos_edge_list, z_others[j])
+                client.inject_augmented_negative_edges(neg_edge_list, z_others[j])
 
         for i, client in enumerate(clients):
             loss_avg = 0
@@ -204,11 +213,12 @@ if __name__ == "__main__":
                 loss_avg += loss
 
             if augment_flag[i] is True and rnd % enhance_interval == 0:
-                print("Augmentation Implementing.")
-                client.train_on_hard_negatives()
+                print("Negative Augmentation Implementing.")
+                # client.train_on_hard_negatives()
+                client.train_on_augmented_negatives()
                 fn_fp_ignore_flag = True
             if augment_flag[i] is True and rnd % enhance_interval == enhance_interval/2:
-                print("Augmentation Implementing.")
+                print("Positive Augmentation Implementing.")
                 client.train_on_augmented_positives()
                 fn_fp_ignore_flag = True
 

@@ -19,6 +19,7 @@ class Client:
         self.criterion = torch.nn.BCEWithLogitsLoss()
         self.hard_neg_edges = None
         self.augmented_pos_embeddings = None
+        self.augmented_neg_embeddings = None
 
     def train(self):
         """常规训练：只使用原始正边和负采样的负边"""
@@ -49,7 +50,7 @@ class Client:
 
         return loss.item()
 
-    def train_on_hard_negatives(self, loss_weight=1.0):
+    def train_on_hard_negatives(self, loss_weight=0.001):
         """增强训练：在增强负边上训练"""
         if self.hard_neg_edges is None:
             return 0.0
@@ -90,12 +91,12 @@ class Client:
 
         return loss.item()
 
-    def train_on_augmented_positives(self, loss_weight=1.0):
+    def train_on_augmented_positives(self, loss_weight=0.2):
         """增强训练：在增强正边上训练"""
         if self.augmented_pos_embeddings is None:
             return 0.0
 
-        self.encoder.train()
+        self.encoder.eval()
         self.decoder.train()
         self.optimizer.zero_grad()
 
@@ -130,6 +131,50 @@ class Client:
         # 合并损失
         loss = loss_ori + loss_weight * loss_aug
 
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+    def train_on_augmented_negatives(self, loss_weight=0.2):
+        """增强训练：在注入的跨图负边上训练（仅训练解码器）"""
+        if self.augmented_neg_embeddings is None:
+            return 0.0
+
+        self.encoder.eval()  # 注意这里不训练编码器
+        self.decoder.train()
+        self.optimizer.zero_grad()
+
+        # 原始边部分
+        pos_edge_index = self.data.edge_index
+        neg_edge_index = negative_sampling(
+            edge_index=pos_edge_index,
+            num_nodes=self.data.num_nodes,
+            num_neg_samples=pos_edge_index.size(1)
+        )
+
+        z = self.encoder(self.data.x, self.data.edge_index)
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
+
+        labels = torch.cat([
+            torch.ones(pos_pred.size(0), device=self.device),
+            torch.zeros(neg_pred.size(0), device=self.device)
+        ])
+        pred = torch.cat([pos_pred, neg_pred], dim=0)
+
+        loss_ori = self.criterion(pred.squeeze(), labels)
+
+        # 增强负边部分
+        z_u_aug, z_v_aug = zip(*self.augmented_neg_embeddings)
+        z_u_aug = torch.stack(z_u_aug).to(self.device)
+        z_v_aug = torch.stack(z_v_aug).to(self.device)
+
+        neg_pred_aug = self.decoder(z_u_aug, z_v_aug)
+        labels_aug = torch.zeros(neg_pred_aug.size(0), device=self.device)
+        loss_aug = self.criterion(neg_pred_aug.squeeze(), labels_aug)
+
+        loss = loss_ori + loss_weight * loss_aug
         loss.backward()
         self.optimizer.step()
 
@@ -271,8 +316,19 @@ class Client:
         else:
             self.augmented_pos_embeddings = None
 
+    def inject_augmented_negative_edges(self, edge_list, other_embeddings):
+        """注入跨图的增强负边（边嵌入形式）"""
+        if edge_list:
+            self.augmented_neg_embeddings = [
+                (other_embeddings[u].detach(), other_embeddings[v].detach())
+                for u, v in edge_list
+            ]
+        else:
+            self.augmented_neg_embeddings = None
+
     def clear_augmented_edges(self):
         self.augmented_pos_embeddings = None
+        self.augmented_neg_embeddings = None
 
     def get_encoder_state(self):
         return self.encoder.state_dict()
