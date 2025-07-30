@@ -5,7 +5,8 @@ import random
 
 
 class Client:
-    def __init__(self, client_id, data, encoder, decoder, device='cpu', lr=0.005, weight_decay=1e-4):
+    def __init__(self, client_id, data, encoder, decoder, device='cpu', lr=0.005,
+                 weight_decay=1e-4, max_grad_norm=1.0):
         self.client_id = client_id
         self.data = data.to(device)
         self.device = device
@@ -20,6 +21,7 @@ class Client:
         self.hard_neg_edges = None
         self.augmented_pos_embeddings = None
         self.augmented_neg_embeddings = None
+        self.max_grad_norm = max_grad_norm
 
     def train(self):
         """常规训练：只使用原始正边和负采样的负边"""
@@ -54,6 +56,10 @@ class Client:
 
         loss = self.criterion(pred.squeeze(), labels)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.encoder.parameters()) + list(self.decoder.parameters()),
+            self.max_grad_norm
+        )
         self.optimizer.step()
 
         return loss.item()
@@ -104,6 +110,10 @@ class Client:
         loss = loss_ori + loss_weight * loss_aug
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.encoder.parameters()) + list(self.decoder.parameters()),
+            self.max_grad_norm
+        )
         self.optimizer.step()
 
         return loss.item()
@@ -157,6 +167,10 @@ class Client:
         loss = loss_ori + loss_weight * loss_aug
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.encoder.parameters()) + list(self.decoder.parameters()),
+            self.max_grad_norm
+        )
         self.optimizer.step()
 
         return loss.item()
@@ -208,6 +222,10 @@ class Client:
 
         loss = loss_ori + loss_weight * loss_aug
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.encoder.parameters()) + list(self.decoder.parameters()),
+            self.max_grad_norm
+        )
         self.optimizer.step()
 
         return loss.item()
