@@ -47,9 +47,9 @@ def load_pyg_data(file_path: str) -> Data:
     return data
 
 
-def load_anchors(file_path: str):
+def load_anchors(file_path: str, base_: int):
     anchor_list = read_anchors(file_path)
-    point = 9714
+    point = base_
     anchor_list = parse_anchors(anchor_list, point)
     return anchor_list
 
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     pyg_path2 = "../Parsed_dataset/wd/wd_2.pt"
     data1, data2 = load_pyg_data(pyg_path1), load_pyg_data(pyg_path2)
     anchor_path = "../dataset/wd/anchors.txt"
-    anchor_pairs = load_anchors(anchor_path)
+    anchor_pairs = load_anchors(anchor_path, 9714)
     print(anchor_pairs)
     results = compute_anchor_feature_differences(data1, data2, anchor_pairs)
 
