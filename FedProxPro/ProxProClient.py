@@ -23,6 +23,11 @@ class Client:
         self.global_encoder_state = None
         self.global_decoder_state = None
 
+        # --- 增强边缓存 ---
+        self.aug_pos_edges = []
+        self.aug_neg_edges = []
+        self.z_others = None  # 跨客户端的节点嵌入缓存
+
     def set_global_state(self, encoder_state, decoder_state):
         """下发全局参数时调用，用于FedProx正则"""
         self.global_encoder_state = {
@@ -32,7 +37,18 @@ class Client:
             k: v.detach().clone() for k, v in decoder_state.items()
         }
 
+    def _compute_prox_reg(self):
+        """FedProx 正则项"""
+        prox_reg = 0.0
+        if self.global_encoder_state is not None and self.global_decoder_state is not None:
+            for (name, p) in self.encoder.named_parameters():
+                prox_reg += ((p - self.global_encoder_state[name].to(self.device)) ** 2).sum()
+            for (name, p) in self.decoder.named_parameters():
+                prox_reg += ((p - self.global_decoder_state[name].to(self.device)) ** 2).sum()
+        return prox_reg
+
     def train(self):
+        """正常本地训练 + FedProx"""
         self.encoder.train()
         self.decoder.train()
         self.optimizer.zero_grad()
@@ -55,21 +71,78 @@ class Client:
         pred = torch.cat([pos_pred, neg_pred], dim=0).squeeze()
 
         task_loss = self.criterion(pred, labels)
+        loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
 
-        # -------- FedProx 正则项 --------
-        prox_reg = 0.0
-        if self.global_encoder_state is not None and self.global_decoder_state is not None:
-            for (name, p) in self.encoder.named_parameters():
-                prox_reg += ((p - self.global_encoder_state[name].to(self.device)) ** 2).sum()
-            for (name, p) in self.decoder.named_parameters():
-                prox_reg += ((p - self.global_decoder_state[name].to(self.device)) ** 2).sum()
-        loss = task_loss + (self.mu / 2.0) * prox_reg
-        # --------------------------------
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
+
+    # ============== 增强机制 ==============
+
+    def inject_augmented_positive_edges(self, pos_edge_list, z_other):
+        """注入增强正边"""
+        self.aug_pos_edges.extend(pos_edge_list)
+        self.z_others = z_other.to(self.device)
+
+    def inject_augmented_negative_edges(self, neg_edge_list, z_other):
+        """注入增强负边"""
+        self.aug_neg_edges.extend(neg_edge_list)
+        self.z_others = z_other.to(self.device)
+
+    def train_on_augmented_positives(self):
+        """在增强正边上训练 + FedProx"""
+        if not self.aug_pos_edges or self.z_others is None:
+            return 0.0
+
+        self.encoder.train()
+        self.decoder.train()
+        self.optimizer.zero_grad()
+
+        z = self.encoder(self.data.x, self.data.edge_index)
+        aug_pred = []
+        for u, v in self.aug_pos_edges:
+            # u 在本地，v 在跨客户端
+            aug_pred.append(self.decoder(z[u], self.z_others[v]))
+        aug_pred = torch.cat(aug_pred, dim=0)
+
+        labels = torch.ones(aug_pred.size(0), device=self.device)
+        task_loss = self.criterion(aug_pred.squeeze(), labels)
+
+        loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
 
         loss.backward()
         self.optimizer.step()
 
+        self.aug_pos_edges = []  # 用完清空
         return loss.item()
+
+    def train_on_augmented_negatives(self):
+        """在增强负边上训练 + FedProx"""
+        if not self.aug_neg_edges or self.z_others is None:
+            return 0.0
+
+        self.encoder.train()
+        self.decoder.train()
+        self.optimizer.zero_grad()
+
+        z = self.encoder(self.data.x, self.data.edge_index)
+        aug_pred = []
+        for u, v in self.aug_neg_edges:
+            aug_pred.append(self.decoder(z[u], self.z_others[v]))
+        aug_pred = torch.cat(aug_pred, dim=0)
+
+        labels = torch.zeros(aug_pred.size(0), device=self.device)
+        task_loss = self.criterion(aug_pred.squeeze(), labels)
+
+        loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
+
+        loss.backward()
+        self.optimizer.step()
+
+        self.aug_neg_edges = []  # 用完清空
+        return loss.item()
+
+    # =====================================
 
     def evaluate(self, use_test=False):
         self.encoder.eval()
