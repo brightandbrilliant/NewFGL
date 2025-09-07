@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.utils import negative_sampling
+from collections import defaultdict
 
 
 class Client:
@@ -19,13 +20,13 @@ class Client:
         self.criterion = torch.nn.BCEWithLogitsLoss()
         self.mu = mu
 
-        # 全局模型参数缓存（FedProx用）
+        # FedProx 全局参数缓存
         self.global_encoder_state = None
         self.global_decoder_state = None
 
-        # --- 增强边缓存（直接存储嵌入对）---
-        self.aug_pos_embeds = []   # [(z_u, z_v), ...]
-        self.aug_neg_embeds = []   # [(z_u, z_v), ...]
+        # --- 增强边缓存（存储直接嵌入对） ---
+        self.aug_pos_pairs = []  # [(z_u, z_v), ...]
+        self.aug_neg_pairs = []
 
     def set_global_state(self, encoder_state, decoder_state):
         """下发全局参数时调用，用于FedProx正则"""
@@ -76,20 +77,19 @@ class Client:
         self.optimizer.step()
         return loss.item()
 
-    # ============== 增强机制（直接存储嵌入对） ==============
+    # ============== 增强机制（直接嵌入对） ==============
 
-    def inject_augmented_positive_edges(self, embed_pairs):
-        """注入增强正边 (直接传入嵌入对)"""
-        # embed_pairs: [(z_u, z_v), ...]，两者都已经是tensor
-        self.aug_pos_embeds.extend([(u.to(self.device), v.to(self.device)) for u, v in embed_pairs])
+    def inject_augmented_positive_edges(self, pair_list):
+        """注入增强正边，pair_list: [(z_u, z_v), ...]"""
+        self.aug_pos_pairs.extend([(z_u.detach(), z_v.detach()) for z_u, z_v in pair_list])
 
-    def inject_augmented_negative_edges(self, embed_pairs):
-        """注入增强负边 (直接传入嵌入对)"""
-        self.aug_neg_embeds.extend([(u.to(self.device), v.to(self.device)) for u, v in embed_pairs])
+    def inject_augmented_negative_edges(self, pair_list):
+        """注入增强负边，pair_list: [(z_u, z_v), ...]"""
+        self.aug_neg_pairs.extend([(z_u.detach(), z_v.detach()) for z_u, z_v in pair_list])
 
     def train_on_augmented_positives(self):
         """在增强正边上训练 + FedProx"""
-        if not self.aug_pos_embeds:
+        if not self.aug_pos_pairs:
             return 0.0
 
         self.encoder.train()
@@ -97,24 +97,23 @@ class Client:
         self.optimizer.zero_grad()
 
         aug_pred = []
-        for z_u, z_v in self.aug_pos_embeds:
-            aug_pred.append(self.decoder(z_u, z_v))
+        for z_u, z_v in self.aug_pos_pairs:
+            aug_pred.append(self.decoder(z_u.to(self.device), z_v.to(self.device)))
         aug_pred = torch.cat(aug_pred, dim=0)
 
         labels = torch.ones(aug_pred.size(0), device=self.device)
         task_loss = self.criterion(aug_pred.squeeze(), labels)
 
         loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
-
         loss.backward()
         self.optimizer.step()
 
-        self.aug_pos_embeds = []  # 用完清空
+        self.aug_pos_pairs = []  # 用完清空
         return loss.item()
 
     def train_on_augmented_negatives(self):
         """在增强负边上训练 + FedProx"""
-        if not self.aug_neg_embeds:
+        if not self.aug_neg_pairs:
             return 0.0
 
         self.encoder.train()
@@ -122,22 +121,70 @@ class Client:
         self.optimizer.zero_grad()
 
         aug_pred = []
-        for z_u, z_v in self.aug_neg_embeds:
-            aug_pred.append(self.decoder(z_u, z_v))
+        for z_u, z_v in self.aug_neg_pairs:
+            aug_pred.append(self.decoder(z_u.to(self.device), z_v.to(self.device)))
         aug_pred = torch.cat(aug_pred, dim=0)
 
         labels = torch.zeros(aug_pred.size(0), device=self.device)
         task_loss = self.criterion(aug_pred.squeeze(), labels)
 
         loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
-
         loss.backward()
         self.optimizer.step()
 
-        self.aug_neg_embeds = []  # 用完清空
+        self.aug_neg_pairs = []  # 用完清空
         return loss.item()
 
-    # =====================================
+    # ===============================================
+
+    def analyze_prediction_errors(self, cluster_labels, use_test=False, top_percent=0.3):
+        """分析误判边，用于辅助增强注入"""
+        self.encoder.eval()
+        self.decoder.eval()
+
+        false_negatives = defaultdict(int)
+        false_positives = defaultdict(int)
+
+        with torch.no_grad():
+            z = self.encoder(self.data.x, self.data.edge_index)
+
+            if use_test:
+                pos_edge_index = self.data.test_pos_edge_index
+                neg_edge_index = self.data.test_neg_edge_index
+            else:
+                pos_edge_index = self.data.val_pos_edge_index
+                neg_edge_index = self.data.val_neg_edge_index
+
+            pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+            neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
+
+            pos_pred_label = (torch.sigmoid(pos_pred).squeeze() > 0.5).float()
+            neg_pred_label = (torch.sigmoid(neg_pred).squeeze() > 0.5).float()
+
+            fn_mask = (pos_pred_label == 0)
+            fp_mask = (neg_pred_label == 1)
+
+            fn_edges = pos_edge_index[:, fn_mask]
+            fp_edges = neg_edge_index[:, fp_mask]
+
+            for u, v in fn_edges.t().tolist():
+                c1, c2 = cluster_labels[u], cluster_labels[v]
+                false_negatives[(c1, c2)] += 1
+
+            for u, v in fp_edges.t().tolist():
+                c1, c2 = cluster_labels[u], cluster_labels[v]
+                false_positives[(c1, c2)] += 1
+
+        def filter_top_percent(dictionary, top_percent):
+            items = list(dictionary.items())
+            items.sort(key=lambda x: x[1], reverse=True)
+            cutoff = max(1, int(len(items) * top_percent))
+            return dict(items[:cutoff])
+
+        return (
+            filter_top_percent(false_negatives, top_percent),
+            filter_top_percent(false_positives, top_percent)
+        )
 
     def evaluate(self, use_test=False):
         self.encoder.eval()
@@ -163,7 +210,6 @@ class Client:
             ])
 
             pred_label = (torch.sigmoid(pred) > 0.5).float()
-
             correct = (pred_label == labels).sum().item()
             acc = correct / labels.size(0)
 
