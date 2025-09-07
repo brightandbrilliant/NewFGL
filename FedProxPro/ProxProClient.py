@@ -87,8 +87,8 @@ class Client:
         """注入增强负边，pair_list: [(z_u, z_v), ...]"""
         self.aug_neg_pairs.extend([(z_u.detach(), z_v.detach()) for z_u, z_v in pair_list])
 
-    def train_on_augmented_positives(self):
-        """在增强正边上训练 + FedProx"""
+    def train_on_augmented_positives(self, loss_weight=0.1):
+        """增强训练：原始边 + 增强正边 + FedProx"""
         if not self.aug_pos_pairs:
             return 0.0
 
@@ -96,23 +96,43 @@ class Client:
         self.decoder.train()
         self.optimizer.zero_grad()
 
-        aug_pred = []
-        for z_u, z_v in self.aug_pos_pairs:
-            aug_pred.append(self.decoder(z_u.to(self.device), z_v.to(self.device)))
-        aug_pred = torch.cat(aug_pred, dim=0)
+        # 原始边
+        pos_edge_index = self.data.edge_index
+        neg_edge_index = negative_sampling(
+            edge_index=pos_edge_index,
+            num_nodes=self.data.num_nodes,
+            num_neg_samples=pos_edge_index.size(1)
+        )
 
-        labels = torch.ones(aug_pred.size(0), device=self.device)
-        task_loss = self.criterion(aug_pred.squeeze(), labels)
+        z = self.encoder(self.data.x, self.data.edge_index)
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
 
-        loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
+        labels_ori = torch.cat([
+            torch.ones(pos_pred.size(0), device=self.device),
+            torch.zeros(neg_pred.size(0), device=self.device)
+        ])
+        pred_ori = torch.cat([pos_pred, neg_pred], dim=0)
+        loss_ori = self.criterion(pred_ori.squeeze(), labels_ori)
+
+        # 增强正边部分
+        z_u_aug, z_v_aug = zip(*self.aug_pos_pairs)
+        z_u_aug = torch.stack(z_u_aug).to(self.device)
+        z_v_aug = torch.stack(z_v_aug).to(self.device)
+        pos_pred_aug = self.decoder(z_u_aug, z_v_aug)
+        labels_aug = torch.ones(pos_pred_aug.size(0), device=self.device)
+        loss_aug = self.criterion(pos_pred_aug.squeeze(), labels_aug)
+
+        # 合并损失
+        loss = loss_ori + loss_weight * loss_aug + (self.mu / 2.0) * self._compute_prox_reg()
         loss.backward()
         self.optimizer.step()
 
         self.aug_pos_pairs = []  # 用完清空
         return loss.item()
 
-    def train_on_augmented_negatives(self):
-        """在增强负边上训练 + FedProx"""
+    def train_on_augmented_negatives(self, loss_weight=0.1):
+        """增强训练：原始边 + 增强负边 + FedProx"""
         if not self.aug_neg_pairs:
             return 0.0
 
@@ -120,15 +140,35 @@ class Client:
         self.decoder.train()
         self.optimizer.zero_grad()
 
-        aug_pred = []
-        for z_u, z_v in self.aug_neg_pairs:
-            aug_pred.append(self.decoder(z_u.to(self.device), z_v.to(self.device)))
-        aug_pred = torch.cat(aug_pred, dim=0)
+        # 原始边
+        pos_edge_index = self.data.edge_index
+        neg_edge_index = negative_sampling(
+            edge_index=pos_edge_index,
+            num_nodes=self.data.num_nodes,
+            num_neg_samples=pos_edge_index.size(1)
+        )
 
-        labels = torch.zeros(aug_pred.size(0), device=self.device)
-        task_loss = self.criterion(aug_pred.squeeze(), labels)
+        z = self.encoder(self.data.x, self.data.edge_index)
+        pos_pred = self.decoder(z[pos_edge_index[0]], z[pos_edge_index[1]])
+        neg_pred = self.decoder(z[neg_edge_index[0]], z[neg_edge_index[1]])
 
-        loss = task_loss + (self.mu / 2.0) * self._compute_prox_reg()
+        labels_ori = torch.cat([
+            torch.ones(pos_pred.size(0), device=self.device),
+            torch.zeros(neg_pred.size(0), device=self.device)
+        ])
+        pred_ori = torch.cat([pos_pred, neg_pred], dim=0)
+        loss_ori = self.criterion(pred_ori.squeeze(), labels_ori)
+
+        # 增强负边部分
+        z_u_aug, z_v_aug = zip(*self.aug_neg_pairs)
+        z_u_aug = torch.stack(z_u_aug).to(self.device)
+        z_v_aug = torch.stack(z_v_aug).to(self.device)
+        neg_pred_aug = self.decoder(z_u_aug, z_v_aug)
+        labels_aug = torch.zeros(neg_pred_aug.size(0), device=self.device)
+        loss_aug = self.criterion(neg_pred_aug.squeeze(), labels_aug)
+
+        # 合并损失
+        loss = loss_ori + loss_weight * loss_aug + (self.mu / 2.0) * self._compute_prox_reg()
         loss.backward()
         self.optimizer.step()
 
