@@ -163,7 +163,7 @@ if __name__ == "__main__":
     augment_flag = [False, False]
     rnds = [-1, -1]
     last_diff = [10000,10000] # 设一个很大的值
-    fn_fp_ignore_flag = False
+    fn_fp_ignore_flags = [False, False]
 
     print("\n================ Federated Training Start ================")
     for rnd in range(1, num_rounds + 1):
@@ -172,12 +172,12 @@ if __name__ == "__main__":
         z_others = [client.encoder(client.data.x, client.data.edge_index).detach() for client in clients]
 
         for i, client in enumerate(clients):
-            if fn_fp_ignore_flag is False:
+            if fn_fp_ignore_flags[i] is False:
                 fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_fn_percent)
                 sliding_fn_window[i].append(fn)
                 sliding_fp_window[i].append(fp)
             else:
-                fn_fp_ignore_flag = False
+                fn_fp_ignore_flags[i] = False
 
             if rnd >= 150 and rnd % 5 == 0 and augment_flag[i] is False:
                 augment_flag[i], last_diff[i] = judge_loss_window(sliding_loss_window[i], last_diff[i])
@@ -216,11 +216,11 @@ if __name__ == "__main__":
                 print("Negative Augmentation Implementing.")
                 # client.train_on_hard_negatives()
                 client.train_on_augmented_negatives()
-                fn_fp_ignore_flag = True
+                fn_fp_ignore_flags[i] = True
             if augment_flag[i] is True and rnd % enhance_interval == enhance_interval/2:
                 print("Positive Augmentation Implementing.")
                 client.train_on_augmented_positives()
-                fn_fp_ignore_flag = True
+                fn_fp_ignore_flags[i] = True
 
             loss_avg /= training_params['local_epochs']
             sliding_loss_window[i].append(loss_avg)

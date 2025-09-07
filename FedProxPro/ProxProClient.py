@@ -23,10 +23,9 @@ class Client:
         self.global_encoder_state = None
         self.global_decoder_state = None
 
-        # --- 增强边缓存 ---
-        self.aug_pos_edges = []
-        self.aug_neg_edges = []
-        self.z_others = None  # 跨客户端的节点嵌入缓存
+        # --- 增强边缓存（直接存储嵌入对）---
+        self.aug_pos_embeds = []   # [(z_u, z_v), ...]
+        self.aug_neg_embeds = []   # [(z_u, z_v), ...]
 
     def set_global_state(self, encoder_state, decoder_state):
         """下发全局参数时调用，用于FedProx正则"""
@@ -77,32 +76,29 @@ class Client:
         self.optimizer.step()
         return loss.item()
 
-    # ============== 增强机制 ==============
+    # ============== 增强机制（直接存储嵌入对） ==============
 
-    def inject_augmented_positive_edges(self, pos_edge_list, z_other):
-        """注入增强正边"""
-        self.aug_pos_edges.extend(pos_edge_list)
-        self.z_others = z_other.to(self.device)
+    def inject_augmented_positive_edges(self, embed_pairs):
+        """注入增强正边 (直接传入嵌入对)"""
+        # embed_pairs: [(z_u, z_v), ...]，两者都已经是tensor
+        self.aug_pos_embeds.extend([(u.to(self.device), v.to(self.device)) for u, v in embed_pairs])
 
-    def inject_augmented_negative_edges(self, neg_edge_list, z_other):
-        """注入增强负边"""
-        self.aug_neg_edges.extend(neg_edge_list)
-        self.z_others = z_other.to(self.device)
+    def inject_augmented_negative_edges(self, embed_pairs):
+        """注入增强负边 (直接传入嵌入对)"""
+        self.aug_neg_embeds.extend([(u.to(self.device), v.to(self.device)) for u, v in embed_pairs])
 
     def train_on_augmented_positives(self):
         """在增强正边上训练 + FedProx"""
-        if not self.aug_pos_edges or self.z_others is None:
+        if not self.aug_pos_embeds:
             return 0.0
 
         self.encoder.train()
         self.decoder.train()
         self.optimizer.zero_grad()
 
-        z = self.encoder(self.data.x, self.data.edge_index)
         aug_pred = []
-        for u, v in self.aug_pos_edges:
-            # u 在本地，v 在跨客户端
-            aug_pred.append(self.decoder(z[u], self.z_others[v]))
+        for z_u, z_v in self.aug_pos_embeds:
+            aug_pred.append(self.decoder(z_u, z_v))
         aug_pred = torch.cat(aug_pred, dim=0)
 
         labels = torch.ones(aug_pred.size(0), device=self.device)
@@ -113,22 +109,21 @@ class Client:
         loss.backward()
         self.optimizer.step()
 
-        self.aug_pos_edges = []  # 用完清空
+        self.aug_pos_embeds = []  # 用完清空
         return loss.item()
 
     def train_on_augmented_negatives(self):
         """在增强负边上训练 + FedProx"""
-        if not self.aug_neg_edges or self.z_others is None:
+        if not self.aug_neg_embeds:
             return 0.0
 
         self.encoder.train()
         self.decoder.train()
         self.optimizer.zero_grad()
 
-        z = self.encoder(self.data.x, self.data.edge_index)
         aug_pred = []
-        for u, v in self.aug_neg_edges:
-            aug_pred.append(self.decoder(z[u], self.z_others[v]))
+        for z_u, z_v in self.aug_neg_embeds:
+            aug_pred.append(self.decoder(z_u, z_v))
         aug_pred = torch.cat(aug_pred, dim=0)
 
         labels = torch.zeros(aug_pred.size(0), device=self.device)
@@ -139,7 +134,7 @@ class Client:
         loss.backward()
         self.optimizer.step()
 
-        self.aug_neg_edges = []  # 用完清空
+        self.aug_neg_embeds = []  # 用完清空
         return loss.item()
 
     # =====================================

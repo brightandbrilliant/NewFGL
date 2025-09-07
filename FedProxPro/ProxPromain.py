@@ -173,7 +173,7 @@ if __name__ == "__main__":
     augment_flag = [False] * len(clients)
     rnds = [-1] * len(clients)
     last_diff = [10000] * len(clients)
-    fn_fp_ignore_flag = False
+    fn_fp_ignore_flags = [False] * len(clients)   # <-- robust initialization
 
     print("\n================ Federated Training Start (FedProx + Augments) ================")
     for rnd in range(1, num_rounds + 1):
@@ -191,12 +191,12 @@ if __name__ == "__main__":
 
         # 3) 分析误判并准备增强注入（基于滑动窗口与 judge_loss_window）
         for i, client in enumerate(clients):
-            if fn_fp_ignore_flag is False:
+            if fn_fp_ignore_flags[i] is False:
                 fn, fp = client.analyze_prediction_errors(cluster_labels[i], use_test=False, top_percent=top_fp_fn_percent)
                 sliding_fn_window[i].append(fn)
                 sliding_fp_window[i].append(fp)
             else:
-                fn_fp_ignore_flag = False
+                fn_fp_ignore_flags[i] = False
 
             if rnd >= 150 and rnd % 5 == 0 and not augment_flag[i]:
                 augment_flag[i], last_diff[i] = judge_loss_window(sliding_loss_window[i], last_diff[i])
@@ -207,7 +207,7 @@ if __name__ == "__main__":
                 aggregated_fn = aggregate_from_window(sliding_fn_window[i], top_percent=top_fp_fn_percent)
                 aggregated_fp = aggregate_from_window(sliding_fp_window[i], top_percent=top_fp_fn_percent)
 
-                j = 1 - i
+                j = 1 - i  # still using two-client assumption
                 pos_edge_list = extract_augmented_positive_edges(
                     aggregated_fn,
                     edge_dicts[j],
@@ -221,8 +221,14 @@ if __name__ == "__main__":
                     top_k=top_k_per_type
                 )
 
-                client.inject_augmented_positive_edges(pos_edge_list, z_others[j])
-                client.inject_augmented_negative_edges(neg_edge_list, z_others[j])
+                # --- map index pairs (u,v) in pos_edge_list/neg_edge_list to embedding pairs (z_u, z_v)
+                # z_others[j] is the embedding tensor for client j (global encoder output)
+                pos_embed_pairs = [(z_others[j][u].detach(), z_others[j][v].detach()) for (u, v) in pos_edge_list]
+                neg_embed_pairs = [(z_others[j][u].detach(), z_others[j][v].detach()) for (u, v) in neg_edge_list]
+
+                # inject embedding pairs directly (ProxProClient expects embed pairs)
+                client.inject_augmented_positive_edges(pos_embed_pairs)
+                client.inject_augmented_negative_edges(neg_embed_pairs)
 
         # 4) 每个客户端本地训练（包含 FedProx prox 正则）
         for i, client in enumerate(clients):
@@ -235,11 +241,11 @@ if __name__ == "__main__":
             if augment_flag[i] and rnd % enhance_interval == 0:
                 print(f"Client {i}: Negative Augmentation Implementing.")
                 client.train_on_augmented_negatives()
-                fn_fp_ignore_flag = True
+                fn_fp_ignore_flags[i] = True
             if augment_flag[i] and rnd % enhance_interval == (enhance_interval // 2):
                 print(f"Client {i}: Positive Augmentation Implementing.")
                 client.train_on_augmented_positives()
-                fn_fp_ignore_flag = True
+                fn_fp_ignore_flags[i] = True
 
             loss_avg /= training_params['local_epochs']
             sliding_loss_window[i].append(loss_avg)
